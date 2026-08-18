@@ -37,6 +37,30 @@ def _optional_import_error(component: str, install_hint: str, exc: ModuleNotFoun
     ) from exc
 
 
+DETECTRON2_INSTALL_HINT = (
+    "Install Detectron2 following its upstream instructions; see docs/reproducibility.md."
+)
+
+
+def _detectron2_hint(exc: ModuleNotFoundError) -> str:
+    """
+    Turn a Detectron2 import failure into the instruction that fixes it.
+
+    ``pkg_resources`` deserves its own message because the failure reads as a
+    broken Detectron2 build and is nothing of the sort: Detectron2's model_zoo
+    imports it, setuptools removed it in version 81, and the break is identical
+    on every operating system.
+    """
+    if (exc.name or "") == "pkg_resources":
+        return (
+            "Detectron2's model_zoo imports pkg_resources, which setuptools removed in "
+            'version 81. Restore it with `python -m pip install "setuptools<81"`. '
+            "This is a Detectron2/setuptools incompatibility, not a broken Detectron2 "
+            "build or a Windows-specific problem."
+        )
+    return DETECTRON2_INSTALL_HINT
+
+
 def build_segmenter(
     backend: Literal["oneformer", "detectron2", "deeplab"] = "oneformer",
     **kwargs: Any,
@@ -54,25 +78,29 @@ def build_segmenter(
         return OneFormerSegmenter(**kwargs)
 
     if backend == "detectron2":
+        # Construction is inside the guard, not just the import: Detectron2 defers
+        # part of its own import chain to call time (model_zoo imports
+        # pkg_resources only when from_zoo runs), so guarding the import alone let
+        # those failures escape as a bare traceback with no hint attached.
         try:
             from .detectron2 import Detectron2Segmenter
+
+            # Custom weights select the instance mode; without them the model-zoo
+            # panoptic baseline is built.
+            if kwargs.get("weights_path"):
+                return Detectron2Segmenter(**kwargs)
+            kwargs.pop("weights_path", None)
+            kwargs.pop("config_yml", None)
+            kwargs.pop("mode", None)
+            kwargs.pop("thing_classes", None)
+            kwargs.pop("class_space", None)
+            return Detectron2Segmenter.from_zoo(**kwargs)
         except ModuleNotFoundError as exc:
             _optional_import_error(
                 "The Detectron2 segmentation backend",
-                "Install Detectron2 following its upstream instructions; see "
-                "docs/reproducibility.md.",
+                _detectron2_hint(exc),
                 exc,
             )
-        # Custom weights select the instance mode; without them the model-zoo
-        # panoptic baseline is built.
-        if kwargs.get("weights_path"):
-            return Detectron2Segmenter(**kwargs)
-        kwargs.pop("weights_path", None)
-        kwargs.pop("config_yml", None)
-        kwargs.pop("mode", None)
-        kwargs.pop("thing_classes", None)
-        kwargs.pop("class_space", None)
-        return Detectron2Segmenter.from_zoo(**kwargs)
 
     if backend == "deeplab":
         try:

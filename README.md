@@ -104,12 +104,28 @@ python -m pip install -e ".[ml]"
 PyTorch itself is left to you: install the CPU or CUDA build matching your
 machine from [pytorch.org](https://pytorch.org/get-started/locally/). If
 `nvidia-smi` prints nothing, take the CPU build and run with `--device cpu`.
+A venv does not inherit another venv's torch build, so check per environment —
+a `+cpu` version string means `--device cuda` will fail there whatever the GPU
+can do.
 
 The first OneFormer run downloads roughly 1.7 GB into `HF_HOME`. Detectron2
 compiles from source (needs `build-essential python3-dev` on Ubuntu, or Visual
 Studio Build Tools on Windows); the DeepLab backend needs VainF's
 `DeepLabV3Plus-Pytorch` checkout importable as `network` plus a Cityscapes
 checkpoint — see [`docs/reproducibility.md`](docs/reproducibility.md).
+
+**Detectron2 users:** it imports `pkg_resources`, which setuptools removed in
+version 81, so a current environment fails with
+`ModuleNotFoundError: No module named 'pkg_resources'`. Fix it with:
+
+```bash
+python -m pip install "setuptools<81"
+```
+
+This breaks identically on Linux and WSL — it is not a Windows problem.
+[`docs/detectron2-windows.md`](docs/detectron2-windows.md) covers it, the
+torch/`_C` coupling that forces a rebuild when torch changes, and when WSL is
+actually worth the move (usually: not, if the Windows build already works).
 
 Or use the helper:
 
@@ -198,6 +214,8 @@ instances, so the two levels can never disagree about what a tree pixel is.
 
 - Annotation policy (what counts as a tree, crowns vs trunks, occlusions,
   partial trees, minimum visibility): [`docs/annotation_protocol.md`](docs/annotation_protocol.md)
+- Detectron2 on Windows, and the WSL question:
+  [`docs/detectron2-windows.md`](docs/detectron2-windows.md)
 - Metrics, matching rules, empty-case conventions and the validation/test
   split policy: [`docs/evaluation.md`](docs/evaluation.md)
 - Architecture and the mapping from `sidewalk_analysis` components:

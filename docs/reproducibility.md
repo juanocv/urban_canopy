@@ -28,6 +28,9 @@ Instance mode additionally needs your fine-tuned config and weights
 (`--d2-config`, `--d2-weights`); its thing classes must include a class the
 taxonomy maps to `tree`.
 
+See [Detectron2 on Windows](detectron2-windows.md) for the `pkg_resources`
+failure, the torch/`_C` coupling, and an assessment of whether WSL is worth it.
+
 **DeepLab** needs VainF's repository importable as `network`:
 
 ```bash
