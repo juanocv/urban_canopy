@@ -15,9 +15,14 @@ Deriving the semantic mask from the instances rather than annotating it twice is
 deliberate: two separately drawn ground truths would disagree, and then no one
 could say which of the two the pixel metrics were measured against.
 
-Polygon and uncompressed-RLE segmentations are decoded here with no external
-dependency. Compressed RLE (``counts`` as a string) needs ``pycocotools``; the
-loader says so rather than silently skipping those annotations.
+Polygon, uncompressed-RLE and compressed-RLE segmentations are all decoded here
+with no external dependency (see :mod:`urban_canopy.evaluation.rle`), so a
+Roboflow export works whichever segmentation form it was produced with.
+
+Roboflow rewrites ``file_name`` to an export-specific hashed name and keeps the
+original under ``extra.name``. Matching predictions to annotations uses the
+original name when present, so a prediction file produced from the source images
+still joins after a re-export.
 """
 
 from __future__ import annotations
@@ -88,9 +93,11 @@ class CocoAnnotation:
             return mask
 
         if isinstance(seg, Mapping):
+            # is_rle() already took every well-formed RLE, compressed or not, so
+            # reaching here means the dict is missing 'size' or 'counts'.
             raise DatasetValidationError(
-                f"Annotation {self.id} carries compressed RLE, which needs pycocotools. "
-                "Re-export the dataset as polygons, or decode it before evaluating."
+                f"Annotation {self.id} has a dict segmentation that is not valid COCO "
+                f"RLE (keys: {sorted(seg)}); it needs both 'size' and 'counts'."
             )
 
         if not isinstance(seg, Sequence) or not len(seg):
@@ -223,13 +230,20 @@ class CocoDataset:
                         "individual instance and are excluded from instance matching."
                     )
 
+        # Checked on the *join* key, not on the raw file_name: with a Roboflow
+        # export those differ, and a collision that only shows up in match_name
+        # would otherwise pass validation and then abort the evaluation from
+        # inside by_file_name, long after `validate-dataset` said it was fine.
         duplicates = [
             name
-            for name, count in _counter(image.file_name for image in self.images.values()).items()
+            for name, count in _counter(image.match_name for image in self.images.values()).items()
             if count > 1
         ]
         if duplicates:
-            problems.append(f"Duplicate file_name entries: {duplicates[:5]}")
+            problems.append(
+                f"Several images share the same name after resolving extra.name, "
+                f"so predictions cannot be joined unambiguously: {duplicates[:5]}"
+            )
 
         if strict and problems:
             raise DatasetValidationError("; ".join(problems))

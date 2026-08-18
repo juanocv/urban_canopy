@@ -11,6 +11,10 @@ debug_out/
 /*.jpeg
 /*.json
 /*.csv
+# Study configuration is an input, not an output, and belongs in the commit that
+# reports the numbers it produced. Without this the taxonomy file that --taxonomy
+# reads would be ignored at the repo root with no sign that it was.
+!/taxonomy*.json
 
 # Python cache/test output
 __pycache__/

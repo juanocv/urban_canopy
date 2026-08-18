@@ -1,10 +1,16 @@
 # Annotation Protocol
 
 Ground truth is produced manually in Roboflow and exported as **COCO Instance
-Segmentation** (exports are accepted with polygon, uncompressed RLE, or compressed COCO RLE segmentations.). For Roboflow exports, the evaluator uses `images[].extra.name`
-as the original image filename when available, while preserving the exported hashed `file_name` for provenance. One annotation per individual tree. 
+Segmentation**, one annotation per individual tree. Polygon, uncompressed RLE
+and compressed COCO RLE segmentations are all accepted.
 
-This document is the labelling contract: every annotator follows it, and every metric in `docs/evaluation.md` is defined against it.
+Roboflow replaces `file_name` with an export-specific hashed name and keeps the
+original under `images[].extra.name`. The evaluator joins on the original name
+when it is present and keeps the hashed one for provenance, so predictions
+produced from the source images still match after a re-export.
+
+This document is the labelling contract: every annotator follows it, and every
+metric in `docs/evaluation.md` is defined against it.
 
 ## 1. What counts as a tree
 

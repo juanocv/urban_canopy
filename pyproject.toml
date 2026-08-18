@@ -37,7 +37,13 @@ ml = [
   "torch",
   "torchvision",
   "transformers>=4.49",
-  "scipy"
+  # No module here imports scipy, so this looks removable and is not:
+  # OneFormerForUniversalSegmentation.__init__ unconditionally builds
+  # OneFormerHungarianMatcher, whose first statement is
+  # requires_backends(self, ["scipy"]). That matcher only matters for training,
+  # but it is constructed at load time, so from_pretrained raises without scipy
+  # before any inference runs.
+  "scipy",
 ]
 
 [project.urls]

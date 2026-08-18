@@ -1,7 +1,8 @@
 """
 The evaluation runner: predictions file + COCO annotations -> full report.
 
-Joins the two inputs on image basename, evaluates the three independent levels
+Joins the two inputs on image name -- the annotation side resolves Roboflow's
+``extra.name`` back to the original filename first -- evaluates the three levels
 (pixels, instances, coverage indicator), and returns one JSON-ready document.
 Images present in only one of the two inputs are listed, not silently dropped:
 a join that quietly shrinks is the classic way an evaluation flatters itself.
@@ -83,7 +84,9 @@ def evaluate(
     if not shared:
         raise ValueError(
             "No image appears in both the predictions file and the annotations. "
-            "The join is on basenames; check that both sides name files the same way."
+            "The join is on file basenames, with Roboflow's extra.name preferred "
+            "over the exported file_name on the annotation side; check that both "
+            "sides name files the same way."
         )
 
     semantic_pairs = []

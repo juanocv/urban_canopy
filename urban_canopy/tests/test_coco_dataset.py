@@ -151,24 +151,92 @@ def test_rle_empty_and_full():
     assert decode_rle(encode_rle(full)).all()
 
 
-def test_compressed_rle_is_rejected_with_guidance():
-    with pytest.raises(ValueError, match="pycocotools"):
-        decode_rle({"size": [5, 5], "counts": "abc"})
+def _compress_counts(counts):
+    """
+    Port of pycocotools' ``rleToString``, used only by the tests.
+
+    Written independently of the decoder under test so the round-trip below
+    checks the decoder against the upstream format rather than against itself.
+    """
+    out = []
+    for index, count in enumerate(counts):
+        value = int(count)
+        if index > 2:
+            value -= int(counts[index - 2])
+        more = True
+        while more:
+            chunk = value & 0x1F
+            value >>= 5
+            more = (value != -1) if (chunk & 0x10) else (value != 0)
+            if more:
+                chunk |= 0x20
+            out.append(chr(chunk + 48))
+    return "".join(out)
+
+
+@pytest.mark.parametrize(
+    "mask",
+    [
+        np.zeros((10, 12), bool),
+        np.ones((10, 12), bool),
+        np.random.default_rng(1).random((37, 23)) > 0.85,
+        np.random.default_rng(2).random((64, 48)) > 0.30,
+    ],
+    ids=["empty", "full", "sparse", "dense"],
+)
+def test_compressed_rle_decodes(mask):
+    compressed = _compress_counts(encode_rle(mask)["counts"])
+    decoded = decode_rle({"size": list(mask.shape), "counts": compressed})
+    assert (decoded == mask).all()
+
+
+def test_compressed_rle_accepts_bytes():
+    mask = np.zeros((8, 8), bool)
+    mask[2:5, 3:7] = True
+    compressed = _compress_counts(encode_rle(mask)["counts"]).encode("ascii")
+    assert (decode_rle({"size": [8, 8], "counts": compressed}) == mask).all()
+
+
+def test_truncated_compressed_rle_reports_the_problem():
+    # A group whose continuation bit promises another chunk that never arrives
+    # used to escape as a bare IndexError from inside the decode loop.
+    with pytest.raises(ValueError, match="truncated"):
+        decode_rle({"size": [5, 5], "counts": chr(0x20 + 48)})
+
+
+def test_compressed_rle_that_does_not_fill_the_mask_is_rejected():
+    with pytest.raises(ValueError, match="cover"):
+        decode_rle({"size": [50, 50], "counts": _compress_counts([4, 4])})
+
 
 def test_roboflow_original_filename_is_used_for_matching(tmp_path):
+    # Roboflow rewrites file_name on export and keeps the original in extra.name;
+    # predictions are produced from the source images, so the join must use the
+    # original while the hashed name stays for provenance.
     data = _dataset_dict()
-
-    data["images"][0]["file_name"] = (
-        "street_jpg.rf.QIGwbVMOsqXHSgUMaJPz.jpg"
-    )
-    data["images"][0]["extra"] = {
-        "name": "street.jpg"
-    }
+    data["images"][0]["file_name"] = "street_jpg.rf.QIGwbVMOsqXHSgUMaJPz.jpg"
+    data["images"][0]["extra"] = {"name": "street.jpg"}
 
     dataset = CocoDataset.load(_write(tmp_path, data))
 
     assert "street.jpg" in dataset.by_file_name
-    assert (
-        dataset.by_file_name["street.jpg"].file_name
-        == "street_jpg.rf.QIGwbVMOsqXHSgUMaJPz.jpg"
+    assert dataset.by_file_name["street.jpg"].file_name == (
+        "street_jpg.rf.QIGwbVMOsqXHSgUMaJPz.jpg"
     )
+
+
+def test_plain_exports_still_match_on_file_name(tmp_path):
+    dataset = CocoDataset.load(_write(tmp_path, _dataset_dict()))
+    assert set(dataset.by_file_name) == {"street_a.jpg", "no_trees.jpg"}
+
+
+def test_colliding_original_names_are_rejected(tmp_path):
+    # Two exports of the same source image would otherwise silently shadow each
+    # other in the join, and one of them would be scored twice.
+    data = _dataset_dict()
+    data["images"][0]["extra"] = {"name": "street.jpg"}
+    data["images"][1]["extra"] = {"name": "street.jpg"}
+    dataset = CocoDataset.load(_write(tmp_path, data))
+
+    with pytest.raises(DatasetValidationError, match="street.jpg"):
+        dataset.by_file_name
