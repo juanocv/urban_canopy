@@ -61,6 +61,91 @@ Check what you have:
 python -c "import torch, detectron2; from detectron2 import _C; print(torch.__version__, _C.__file__)"
 ```
 
+A mismatch surfaces as an import error that names nothing useful:
+
+```
+ImportError: DLL load failed while importing _C: The specified procedure could not be found.
+```
+
+## Moving a venv from CPU torch to CUDA torch
+
+Worked example, and the order matters: torch first, then rebuild Detectron2
+against it.
+
+**1. Pick a CUDA build your GPU still supports.** This is the step that decides
+everything else. Maxwell cards (GTX 9xx, compute capability 5.2) are supported
+by CUDA 11.8 and dropped by CUDA 12.8, and PyTorch stopped shipping cu118
+wheels after 2.6. Check what a candidate build targets:
+
+```bash
+python -c "import torch; print(torch.cuda.get_arch_list())"
+python -c "import torch; print(torch.cuda.get_device_capability(0))"
+```
+
+A capability of `(5, 2)` is covered by `sm_50` in the arch list — CUDA binaries
+are compatible within an architecture family, so `sm_50` code runs on `sm_52`.
+
+**2. Install torch and torchvision as a matched pair**, into the venv only:
+
+```bash
+.venv/Scripts/python.exe -m pip install "torch==2.6.0+cu118" "torchvision==0.21.0+cu118" \
+  --index-url https://download.pytorch.org/whl/cu118
+```
+
+**3. Rebuild Detectron2 against the new torch**, from the same commit, in a
+shell where MSVC is on the path:
+
+```bat
+call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+set CUDA_VISIBLE_DEVICES=-1
+set DISTUTILS_USE_SDK=1
+set MAX_JOBS=2
+.venv\Scripts\python.exe -m pip install --no-build-isolation --force-reinstall --no-deps ^
+  "git+https://github.com/facebookresearch/detectron2.git@<commit>"
+```
+
+`--no-build-isolation` is required: Detectron2's `setup.py` imports the torch
+you just installed to decide what to compile, and an isolated build environment
+would not have it. `MAX_JOBS` bounds memory — an unbounded parallel MSVC build
+is a common cause of the compiler being killed mid-run.
+
+### Why `CUDA_VISIBLE_DEVICES=-1` during the build
+
+It makes Detectron2 compile its ops for CPU (`CppExtension`) instead of CUDA.
+That is deliberate here, for two reasons:
+
+- `setup.py` selects a CUDA build when `torch.cuda.is_available()` and a CUDA
+  toolkit are both found. The toolkit it finds is whatever is installed —
+  **12.8** on this machine — while torch is built against **11.8**. Compiling an
+  extension with a different CUDA major version than torch does not produce a
+  working binary.
+- CUDA 12.8 cannot generate code for `sm_52` anyway, so a "successful" CUDA
+  build would not run on the GPU.
+
+Setting the variable to `-1` makes `torch.cuda.is_available()` false for the
+build process only, which is enough to select the CPU path. Clearing
+`CUDA_HOME`/`CUDA_PATH` does **not** work: torch falls back to scanning the
+default toolkit install directory.
+
+**What this costs.** The network still runs on the GPU — this only affects
+Detectron2's own custom kernels (rotated boxes, deformable convolution,
+accelerated COCO eval). The panoptic path this project uses never calls them:
+NMS and ROIAlign come from torchvision. If a future model does need one, it
+fails with a clear "not compiled with GPU support" rather than the cryptic DLL
+error above. Getting full CUDA ops would mean installing the CUDA 11.8 toolkit
+alongside 12.8 and rebuilding without `CUDA_VISIBLE_DEVICES=-1`.
+
+**Measured result** on a GTX 970, `panoptic_fpn_R_50_3x`, 600x400 frame,
+segmentation only, after warm-up:
+
+| Device | Median inference |
+|---|---|
+| CPU | 2.09 s |
+| CUDA | 0.23 s |
+
+About 9x, and identical coverage output on both — which is the check that
+matters: the device must not change the number.
+
 ## Is WSL worth it?
 
 Not automatically, and usually not once Windows is already working. The honest
@@ -87,7 +172,9 @@ trade:
 - **You need to change the torch version.** Rebuilding Detectron2 is
   substantially easier on Linux, and prebuilt wheels exist for common
   torch/CUDA combinations. On Windows every torch change means another MSVC
-  build.
+  build. (That rebuild has since been done here successfully — see the section
+  above — so the cost is known rather than hypothetical: one `pip install` with
+  the right environment variables, a few minutes of compilation.)
 - **You want parity with CI or a deployment target**, both of which are Linux
   here.
 - **The MSVC build has not succeeded yet.** If you are still fighting the
@@ -114,3 +201,26 @@ A CPU-only torch reports `+cpu` in its version string, and `--device cuda` will
 fail there regardless of what the GPU can do — worth checking per environment,
 since a venv does not inherit the torch build of another one on the same
 machine.
+
+## Environment isolation
+
+Changing torch in a venv cannot affect another project on the same machine,
+provided the venv was created without system site-packages:
+
+```bash
+grep include-system-site-packages .venv/pyvenv.cfg   # must say false
+python -c "import sys; print(sys.prefix != sys.base_prefix)"   # must say True
+```
+
+With that, the only way to disturb a neighbouring project is to run `pip`
+against the wrong interpreter, so address the venv explicitly
+(`.venv/Scripts/python.exe -m pip ...`) rather than relying on which one is
+active. The NVIDIA driver is shared and is not touched by any of this; CUDA
+itself arrives inside the torch wheel, which is why two venvs on one machine can
+hold different CUDA versions without conflict.
+
+Take a snapshot before a torch migration so the environment can be restored:
+
+```bash
+.venv/Scripts/python.exe -m pip freeze > venv-freeze-backup.txt
+```
