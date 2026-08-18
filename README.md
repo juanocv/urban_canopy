@@ -143,7 +143,21 @@ tree-ai --image street.jpg --seg deeplab \
         --deeplab-repo ./DeepLabV3Plus-network --ckpt <cityscapes-weights.pth>
 ```
 
-`--deeplab-repo` also accepts a full or sparse clone if you have one. See
+`--deeplab-repo` also accepts a full or sparse clone if you have one.
+
+Both paths are properties of the machine rather than of a run, so set them once
+in `.env` and later calls need neither flag:
+
+```ini
+UC_DEEPLAB_CKPT=C:/models/best_deeplabv3plus_mobilenet_cityscapes_os16.pth
+UC_DEEPLAB_REPO=./DeepLabV3Plus-network
+```
+
+```bash
+tree-ai --image street.jpg --seg deeplab        # both resolved from .env
+```
+
+`--ckpt` and `--deeplab-repo` still win when passed, for a one-off override. See
 [`docs/reproducibility.md`](docs/reproducibility.md#backend-specific-setup).
 
 **Detectron2 users:** it imports `pkg_resources`, which setuptools removed in
@@ -192,11 +206,11 @@ Address, multi-view with a known street bearing:
 tree-ai "Av. Paulista 1578, Sao Paulo" --multi-view --reference-heading 45 --offsets 90,270
 ```
 
-Export everything an evaluation or audit needs — the flags take no path, and
-everything lands in this run's directory:
+Export everything an evaluation or audit needs — one flag, everything lands in
+this run's directory:
 
 ```bash
-tree-ai --image street.jpg --save-artifacts --metrics-json --csv --predictions-json
+tree-ai --image street.jpg --save-artifacts
 ```
 
 ### Where results go
@@ -216,11 +230,15 @@ artifacts_out/
       001_...           further views, in acquisition order
 ```
 
+`--save-artifacts` writes that whole bundle. The three export flags exist for
+asking for one piece on its own — `--csv` alone writes the rows and no images,
+which is what a large batch usually wants — and any of them accepts an explicit
+path (`--csv results.csv`) to place that file elsewhere.
+
 Runs accumulate instead of overwriting, so analysing one image with OneFormer
 and then with Detectron2 leaves both results side by side — which is the whole
-point of supporting several backends. Name a run yourself with `--run-name`, and
-pass an explicit path to any export flag (`--csv results.csv`) to override the
-default location. Nothing is written unless an output flag asks for it.
+point of supporting several backends. Name a run yourself with `--run-name`.
+Nothing is written unless an output flag asks for it.
 
 Evaluate against Roboflow COCO ground truth:
 

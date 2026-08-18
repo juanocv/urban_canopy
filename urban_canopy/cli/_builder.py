@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from urban_canopy.core.config import CanopyConfig
 from urban_canopy.core.pipeline import CanopyPipeline
 from urban_canopy.core.viewplan import ViewPlanConfig
@@ -79,27 +81,45 @@ def build_segmenter_from_args(args, device: str):
         )
 
     if args.seg == "deeplab":
-        if args.ckpt is None:
-            raise ValueError("--ckpt is required for the deeplab backend")
-        model_name = args.deeplab_model
-        if model_name is None:
-            from urban_canopy.models.deeplab import infer_model_name
+        from urban_canopy.models.deeplab import get_settings, infer_model_name
 
-            model_name = infer_model_name(args.ckpt)
+        # A flag beats the standing default; the default beats nothing at all.
+        defaults = get_settings()
+        ckpt = args.ckpt if args.ckpt is not None else defaults.ckpt
+        repo = args.deeplab_repo if args.deeplab_repo is not None else defaults.repo
+
+        if ckpt is None:
+            raise ValueError(
+                "The deeplab backend needs a checkpoint. Pass --ckpt, or set it once "
+                "for this machine with UC_DEEPLAB_CKPT (in the environment or .env) "
+                "so later runs do not have to repeat it."
+            )
+        ckpt = Path(ckpt).expanduser()
+        if not ckpt.exists():
+            source = "--ckpt" if args.ckpt is not None else "UC_DEEPLAB_CKPT"
+            raise FileNotFoundError(f"DeepLab checkpoint from {source} does not exist: {ckpt}")
+        if args.ckpt is None:
+            logger.info("DeepLab checkpoint from UC_DEEPLAB_CKPT: %s", ckpt)
+
+        model_name = args.deeplab_model or defaults.model
+        if model_name is None:
+            model_name = infer_model_name(ckpt)
             if model_name is None:
                 raise ValueError(
-                    f"Could not infer the DeepLab architecture from {args.ckpt.name!r}. "
-                    "Pass --deeplab-model explicitly (e.g. deeplabv3plus_mobilenet)."
+                    f"Could not infer the DeepLab architecture from {ckpt.name!r}. "
+                    "Pass --deeplab-model explicitly (e.g. deeplabv3plus_mobilenet), "
+                    "or set UC_DEEPLAB_MODEL."
                 )
             logger.info("DeepLab architecture inferred from the checkpoint name: %s", model_name)
+
         return build_segmenter(
             "deeplab",
-            ckpt_path=str(args.ckpt),
+            ckpt_path=str(ckpt),
             model_name=model_name,
             taxonomy=taxonomy,
             allow_pickle=True,
             device=device,
-            repo_path=str(args.deeplab_repo) if args.deeplab_repo else None,
+            repo_path=str(Path(repo).expanduser()) if repo else None,
         )
 
     raise ValueError(f"Unknown backend: {args.seg!r}")

@@ -85,6 +85,9 @@ def collect_diagnostics() -> dict[str, Any]:
     env_keys = [
         "GOOGLE_API_KEY",
         "UC_SEG_BACKEND",
+        "UC_DEEPLAB_CKPT",
+        "UC_DEEPLAB_REPO",
+        "UC_DEEPLAB_MODEL",
         "UC_DEBUG",
         "UC_LOG_LEVEL",
         "UC_LOG_FORMAT",

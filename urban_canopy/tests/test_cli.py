@@ -294,3 +294,55 @@ def test_validate_dataset_subcommand(tmp_path, capsys):
     code = cli_main.main(["validate-dataset", "--annotations", str(ann_path)])
     assert code == 0
     assert "Dataset looks usable" in capsys.readouterr().out
+
+
+def test_save_artifacts_implies_every_export(tmp_path, stub_backend):
+    """
+    --save-artifacts is the "give me everything" flag. Asking for the audit
+    bundle should not also require spelling out the three export flags.
+    """
+    outdir = tmp_path / "o"
+    code = cli_main.main(
+        ["--image", str(_image(tmp_path)), "--outdir", str(outdir), "--save-artifacts"]
+    )
+    assert code == 0
+
+    run_dir = _only_run_dir(outdir)
+    assert (run_dir / "run.json").exists()
+    assert (run_dir / "views.csv").exists()
+    assert (run_dir / "predictions.json").exists()
+    assert (run_dir / "views" / "000_frame" / "overlay_tree.png").exists()
+
+
+def test_export_flags_still_work_alone(tmp_path, stub_backend):
+    # --csv on its own must stay cheap: rows, no images, no prediction masks.
+    outdir = tmp_path / "o"
+    cli_main.main(["--image", str(_image(tmp_path)), "--outdir", str(outdir), "--csv"])
+
+    run_dir = _only_run_dir(outdir)
+    assert (run_dir / "views.csv").exists()
+    assert not (run_dir / "run.json").exists()
+    assert not (run_dir / "predictions.json").exists()
+    assert not any((run_dir / "views").iterdir())
+
+
+def test_explicit_path_overrides_the_implied_export(tmp_path, stub_backend):
+    outdir = tmp_path / "o"
+    custom = tmp_path / "elsewhere" / "rows.csv"
+    cli_main.main(
+        [
+            "--image",
+            str(_image(tmp_path)),
+            "--outdir",
+            str(outdir),
+            "--save-artifacts",
+            "--csv",
+            str(custom),
+        ]
+    )
+    run_dir = _only_run_dir(outdir)
+    assert custom.exists()
+    assert not (run_dir / "views.csv").exists()
+    # The other two implied exports still land in the run directory.
+    assert (run_dir / "run.json").exists()
+    assert (run_dir / "predictions.json").exists()

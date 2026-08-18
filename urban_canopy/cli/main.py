@@ -152,11 +152,26 @@ def _run_analyse(args, parser) -> int:
     )
 
     # ---------------- artifacts / exports ----------------
+    # --save-artifacts is the "give me everything" flag: it implies the three
+    # export flags too, so a run that wants the full audit bundle does not have
+    # to spell out --metrics-json --csv --predictions-json on top of it. Each
+    # export flag still works on its own (e.g. --csv alone, no images), and an
+    # explicit path on any of them overrides where it lands.
+    from urban_canopy.cli._argparse import DEFAULT_EXPORT
+
+    metrics_target = args.metrics_json
+    csv_target = args.csv
+    predictions_target = args.predictions_json
+    if args.save_artifacts:
+        metrics_target = metrics_target if metrics_target is not None else DEFAULT_EXPORT
+        csv_target = csv_target if csv_target is not None else DEFAULT_EXPORT
+        predictions_target = (
+            predictions_target if predictions_target is not None else DEFAULT_EXPORT
+        )
+
     # The run directory is created only when the run actually writes something,
     # so a plain analysis leaves no empty folders behind.
-    wants_output = bool(
-        args.save_artifacts or args.metrics_json or args.csv or args.predictions_json
-    )
+    wants_output = bool(args.save_artifacts or metrics_target or csv_target or predictions_target)
     if not wants_output:
         return 0
 
@@ -169,23 +184,21 @@ def _run_analyse(args, parser) -> int:
             write_view_artifacts(result, artifact_config, index=index)
         print(f"  views/      {len(results)} view folder(s)")
 
-    # A flag given without a path writes into the run directory; an explicit
-    # path still wins, so existing scripts keep working.
-    if args.metrics_json is not None:
+    if metrics_target is not None:
         if multi is not None:
             payload = {"manifest": manifest, **multi.to_dict()}
         else:
             payload = {"manifest": manifest, "views": [r.to_dict() for r in results]}
-        target = _export_path(args.metrics_json, layout.run_json)
+        target = _export_path(metrics_target, layout.run_json)
         write_json(payload, target)
         print(f"  {target.name:<12} run metrics")
 
-    if args.csv is not None:
-        target = _export_path(args.csv, layout.views_csv)
+    if csv_target is not None:
+        target = _export_path(csv_target, layout.views_csv)
         write_rows_csv(results_to_rows(results), target)
         print(f"  {target.name:<12} per-view rows")
 
-    if args.predictions_json is not None:
+    if predictions_target is not None:
         from urban_canopy.evaluation.predictions import build_predictions, write_predictions
         from urban_canopy.io.image_io import get_exclude_bottom_px
 
@@ -195,7 +208,7 @@ def _run_analyse(args, parser) -> int:
             else get_exclude_bottom_px()
         )
         payload = build_predictions(results, manifest=manifest, exclude_bottom_px=exclude)
-        target = _export_path(args.predictions_json, layout.predictions_json)
+        target = _export_path(predictions_target, layout.predictions_json)
         write_predictions(target, payload)
         print(f"  {target.name:<12} for `tree-ai evaluate`")
 

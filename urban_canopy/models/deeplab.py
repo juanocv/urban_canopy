@@ -22,6 +22,8 @@ from pathlib import Path
 import numpy as np
 import torch
 from PIL import Image
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from torchvision import transforms
 
 from urban_canopy.log import get_logger
@@ -30,6 +32,60 @@ from .base import Segment, SegmentationOutput, build_group_masks
 from .taxonomy import Taxonomy, default_taxonomy
 
 logger = get_logger(__name__)
+
+
+class Settings(BaseSettings):
+    """
+    Standing defaults for the DeepLab backend, from ``UC_DEEPLAB_*`` or ``.env``.
+
+    The checkpoint and the code checkout are properties of a machine, not of a
+    run: they sit at the same path for weeks while every other flag changes. Set
+    them once here and ``--ckpt`` / ``--deeplab-repo`` become optional, still
+    overriding when passed.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="UC_DEEPLAB_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    #: Path to a Cityscapes .pth checkpoint.
+    ckpt: Path | None = None
+    #: Path to a VainF DeepLabV3Plus-Pytorch checkout (the folder holding network/).
+    repo: Path | None = None
+    #: Entry point in network.modeling; None infers it from the checkpoint name.
+    model: str | None = None
+
+    @field_validator("ckpt", "repo", "model", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value):
+        """
+        Treat an empty value as "not configured".
+
+        ``.env.example`` ships these keys empty so they are discoverable, and
+        copying it to ``.env`` is the documented first step. Without this,
+        ``UC_DEEPLAB_CKPT=`` would parse as ``Path('.')`` -- a configured
+        checkpoint pointing at the current directory -- and the run would fail
+        with a puzzling "checkpoint does not exist: ." instead of the message
+        that says a checkpoint is needed.
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+
+def get_settings() -> Settings:
+    """
+    Read the DeepLab defaults.
+
+    Constructed per call rather than cached at import time so a test or a caller
+    that adjusts the environment is not fighting a value frozen when the module
+    first loaded.
+    """
+    return Settings()
+
 
 CITYSCAPES_LABELS = {
     0: "road",

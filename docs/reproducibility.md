@@ -90,19 +90,47 @@ infers the architecture from the filename and refuses a checkpoint that does not
 fit the chosen backbone, so a mobilenet checkpoint cannot be silently loaded
 into a resnet101.
 
-For library or notebook use, pass the same path as `repo_path`:
+### Standing defaults
 
-```python
-build_segmenter("deeplab", ckpt_path=ckpt, repo_path="./DeepLabV3Plus-Pytorch")
+The checkpoint and the checkout sit at the same path for weeks while every other
+flag changes run to run, so they are configuration rather than arguments. Set
+them once — environment or `.env` — and the flags become optional:
+
+| Variable | Replaces | Falls back to |
+|---|---|---|
+| `UC_DEEPLAB_CKPT` | `--ckpt` | — (required one way or the other) |
+| `UC_DEEPLAB_REPO` | `--deeplab-repo` | whatever already imports as `network` |
+| `UC_DEEPLAB_MODEL` | `--deeplab-model` | architecture inferred from the checkpoint filename |
+
+```ini
+# .env
+UC_DEEPLAB_CKPT=C:/models/best_deeplabv3plus_mobilenet_cityscapes_os16.pth
+UC_DEEPLAB_REPO=./DeepLabV3Plus-network
 ```
 
-To avoid repeating it, drop a `.pth` file into the environment instead — this
-persists for the venv without touching the checkout or the third-party code:
+```bash
+tree-ai --image street.jpg --seg deeplab                       # uses both
+tree-ai --image street.jpg --seg deeplab --ckpt other.pth      # flag overrides
+```
+
+Precedence is flag, then variable, then nothing. A missing file is reported
+against whichever supplied it, so `does not exist` names either `--ckpt` or
+`UC_DEEPLAB_CKPT` rather than leaving you to guess which one was in effect.
+Blank values (`UC_DEEPLAB_CKPT=`, as shipped in `.env.example`) count as unset.
+
+For library or notebook use, pass the same paths directly:
+
+```python
+build_segmenter("deeplab", ckpt_path=ckpt, repo_path="./DeepLabV3Plus-network")
+```
+
+A `.pth` file in site-packages is a third option, if you would rather the
+checkout be importable to everything in the venv:
 
 ```bash
 python -c "import sysconfig, pathlib; \
   pathlib.Path(sysconfig.get_paths()['purelib'], 'deeplab.pth') \
-  .write_text(str(pathlib.Path('DeepLabV3Plus-Pytorch').resolve()))"
+  .write_text(str(pathlib.Path('DeepLabV3Plus-network').resolve()))"
 ```
 
 Remember what this backend can and cannot report: Cityscapes has no tree class,

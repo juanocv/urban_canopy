@@ -76,21 +76,28 @@ def _add_backend_arguments(parser: argparse.ArgumentParser) -> None:
         default=0.50,
         help="Detectron2 score threshold (default 0.50)",
     )
-    # DeepLab checkpoint
-    parser.add_argument("--ckpt", type=Path, help="Path to DeepLab checkpoint (.pth)")
+    # DeepLab. All three have standing defaults (UC_DEEPLAB_CKPT / _REPO / _MODEL,
+    # settable in .env), so on a configured machine none of them need repeating.
+    parser.add_argument(
+        "--ckpt",
+        type=Path,
+        default=None,
+        help="Path to DeepLab checkpoint (.pth). Defaults to UC_DEEPLAB_CKPT.",
+    )
     parser.add_argument(
         "--deeplab-repo",
         type=Path,
         default=None,
         help="Path to a VainF DeepLabV3Plus-Pytorch checkout (the folder holding "
         "network/). Upstream ships no setup.py, so it cannot be pip-installed; "
-        "this puts it on sys.path for the run instead.",
+        "this puts it on sys.path for the run instead. Defaults to UC_DEEPLAB_REPO.",
     )
     parser.add_argument(
         "--deeplab-model",
         default=None,
         help="Entry point inside network.modeling (e.g. deeplabv3plus_mobilenet). "
-        "Defaults to the architecture named in the --ckpt filename.",
+        "Defaults to UC_DEEPLAB_MODEL, then to the architecture named in the "
+        "checkpoint filename.",
     )
 
 
@@ -168,31 +175,35 @@ def _add_output_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--save-artifacts",
         action="store_true",
-        help="Write per-view artifacts: RGB, raw mask, refined mask, overlays, metrics.json",
+        help="Write the full audit bundle for this run: per-view images (RGB, raw "
+        "mask, refined mask, overlays, metrics.json) plus run.json, views.csv and "
+        "predictions.json. The three export flags below are for asking for one of "
+        "them on its own.",
     )
     parser.add_argument(
         "--metrics-json",
         nargs="?",
         const=DEFAULT_EXPORT,
         default=None,
-        help="Write run metrics as JSON. Without a path, writes run.json inside "
-        "the run directory.",
+        help="Write run metrics as JSON (implied by --save-artifacts). Without a "
+        "path, writes run.json inside the run directory.",
     )
     parser.add_argument(
         "--csv",
         nargs="?",
         const=DEFAULT_EXPORT,
         default=None,
-        help="Write per-view rows as CSV. Without a path, writes views.csv inside "
-        "the run directory.",
+        help="Write per-view rows as CSV (implied by --save-artifacts). Without a "
+        "path, writes views.csv inside the run directory.",
     )
     parser.add_argument(
         "--predictions-json",
         nargs="?",
         const=DEFAULT_EXPORT,
         default=None,
-        help="Write a predictions file (with RLE masks) for `tree-ai evaluate`. "
-        "Without a path, writes predictions.json inside the run directory.",
+        help="Write a predictions file with RLE masks for `tree-ai evaluate` "
+        "(implied by --save-artifacts). Without a path, writes predictions.json "
+        "inside the run directory.",
     )
 
 
