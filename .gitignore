@@ -9,8 +9,8 @@ debug_out/
 /*.png
 /*.jpg
 /*.jpeg
-predictions*.json
-evaluation*.json
+/*.json
+/*.csv
 
 # Python cache/test output
 __pycache__/

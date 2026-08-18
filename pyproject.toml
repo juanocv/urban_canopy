@@ -37,6 +37,7 @@ ml = [
   "torch",
   "torchvision",
   "transformers>=4.49",
+  "scipy"
 ]
 
 [project.urls]

@@ -8,9 +8,7 @@ tree-ai evaluate --predictions predictions.json --annotations annotations.json
 ```
 
 The predictions file embeds the run manifest (model, versions, taxonomy,
-refinement config, seed), so every reported number is traceable. The join
-between predictions and annotations is on the image **basename**; images
-present on only one side are listed in the report, never silently dropped.
+refinement config, seed), so every reported number is traceable. The join is performed on the original image basename. For Roboflow exports, `images[].extra.name` is preferred when present because Roboflow may replace `file_name` with an export-specific hashed name. Otherwise, the COCO `file_name` basename is used. Images present on only one side are listed in the report, never silently dropped.
 
 Three independent levels are computed. They answer different questions and are
 never merged into one score.

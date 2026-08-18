@@ -47,39 +47,79 @@ def encode_rle(mask: np.ndarray) -> dict[str, Any]:
 
 
 def decode_rle(rle: Mapping[str, Any]) -> np.ndarray:
-    """Decode uncompressed COCO RLE back into a boolean H x W mask."""
     size = rle.get("size")
     counts = rle.get("counts")
+
+    def _decode_compressed_counts(encoded: str | bytes) -> list[int]:
+        """Decode COCO's compressed RLE counts string into integer run lengths."""
+        if isinstance(encoded, bytes):
+            encoded = encoded.decode("ascii")
+
+        counts: list[int] = []
+        p = 0
+        m = 0
+
+        while p < len(encoded):
+            x = 0
+            k = 0
+            more = True
+
+            while more:
+                c = ord(encoded[p]) - 48
+                x |= (c & 0x1F) << (5 * k)
+                more = bool(c & 0x20)
+
+                p += 1
+                k += 1
+
+                if not more and (c & 0x10):
+                    x |= -1 << (5 * k)
+
+            if m > 2:
+                x += counts[m - 2]
+
+            counts.append(int(x))
+            m += 1
+
+        return counts
+
     if size is None or counts is None:
         raise ValueError("RLE needs both 'size' and 'counts'.")
+
     if isinstance(counts, (str, bytes)):
-        raise ValueError(
-            "This is compressed RLE (counts is a string). Decode it with pycocotools "
-            "and pass the resulting mask, or export uncompressed RLE."
-        )
+        counts = _decode_compressed_counts(counts)
 
     height, width = int(size[0]), int(size[1])
+
     flat = np.zeros(height * width, dtype=bool)
 
     position = 0
     value = False
+
     for run in counts:
         run = int(run)
+
         if run < 0:
             raise ValueError("RLE counts must be non-negative.")
+
         end = position + run
+
         if end > flat.size:
             raise ValueError(
-                f"RLE counts overrun the declared size: {end} > {flat.size} for {height}x{width}."
+                f"RLE counts overrun the declared size: "
+                f"{end} > {flat.size} for {height}x{width}."
             )
+
         if value and run:
             flat[position:end] = True
+
         position = end
         value = not value
 
     if position != flat.size:
         raise ValueError(
-            f"RLE counts cover {position} of {flat.size} pixels for a {height}x{width} mask."
+            f"RLE counts cover {position} of {flat.size} pixels "
+            f"for a {height}x{width} mask."
         )
 
     return flat.reshape((height, width), order="F")

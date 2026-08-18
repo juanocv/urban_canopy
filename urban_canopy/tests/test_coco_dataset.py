@@ -154,3 +154,21 @@ def test_rle_empty_and_full():
 def test_compressed_rle_is_rejected_with_guidance():
     with pytest.raises(ValueError, match="pycocotools"):
         decode_rle({"size": [5, 5], "counts": "abc"})
+
+def test_roboflow_original_filename_is_used_for_matching(tmp_path):
+    data = _dataset_dict()
+
+    data["images"][0]["file_name"] = (
+        "street_jpg.rf.QIGwbVMOsqXHSgUMaJPz.jpg"
+    )
+    data["images"][0]["extra"] = {
+        "name": "street.jpg"
+    }
+
+    dataset = CocoDataset.load(_write(tmp_path, data))
+
+    assert "street.jpg" in dataset.by_file_name
+    assert (
+        dataset.by_file_name["street.jpg"].file_name
+        == "street_jpg.rf.QIGwbVMOsqXHSgUMaJPz.jpg"
+    )

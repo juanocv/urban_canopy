@@ -58,6 +58,11 @@ class CocoImage:
     file_name: str
     width: int
     height: int
+    original_file_name: str | None = None
+
+    @property
+    def match_name(self) -> str:
+        return Path(self.original_file_name or self.file_name).name
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,11 +137,20 @@ class CocoDataset:
 
         images: dict[int, CocoImage] = {}
         for raw in data["images"]:
+            extra = raw.get("extra") or {}
+
+            original_name = None
+            if isinstance(extra, Mapping):
+                value = extra.get("name")
+                if value:
+                    original_name = str(value)
+
             images[int(raw["id"])] = CocoImage(
                 id=int(raw["id"]),
                 file_name=str(raw["file_name"]),
                 width=int(raw["width"]),
                 height=int(raw["height"]),
+                original_file_name=original_name,
             )
 
         categories = {int(c["id"]): str(c["name"]) for c in data["categories"]}
@@ -224,7 +238,20 @@ class CocoDataset:
     # ------------------------------------------------------------------ #
     @property
     def by_file_name(self) -> dict[str, CocoImage]:
-        return {image.file_name: image for image in self.images.values()}
+        index: dict[str, CocoImage] = {}
+
+        for image in self.images.values():
+            name = image.match_name
+
+            if name in index:
+                raise DatasetValidationError(
+                    f"Multiple annotation images resolve to {name!r}: "
+                    f"{index[name].file_name!r} and {image.file_name!r}."
+                )
+
+            index[name] = image
+
+        return index
 
     def tree_annotations(self, image_id: int) -> list[CocoAnnotation]:
         """Non-crowd annotations of a tree category for one image."""
