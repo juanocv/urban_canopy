@@ -79,6 +79,14 @@ def _add_backend_arguments(parser: argparse.ArgumentParser) -> None:
     # DeepLab checkpoint
     parser.add_argument("--ckpt", type=Path, help="Path to DeepLab checkpoint (.pth)")
     parser.add_argument(
+        "--deeplab-repo",
+        type=Path,
+        default=None,
+        help="Path to a VainF DeepLabV3Plus-Pytorch checkout (the folder holding "
+        "network/). Upstream ships no setup.py, so it cannot be pip-installed; "
+        "this puts it on sys.path for the run instead.",
+    )
+    parser.add_argument(
         "--deeplab-model",
         default=None,
         help="Entry point inside network.modeling (e.g. deeplabv3plus_mobilenet). "

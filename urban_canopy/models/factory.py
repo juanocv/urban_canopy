@@ -108,8 +108,8 @@ def build_segmenter(
         except ModuleNotFoundError as exc:
             _optional_import_error(
                 "The DeepLab segmentation backend",
-                "Install the ML extra and make the local DeepLab `network` package "
-                "importable; see docs/reproducibility.md.",
+                'Install the ML extra with `python -m pip install -e ".[ml]"`; '
+                "see docs/reproducibility.md.",
                 exc,
             )
 
@@ -118,7 +118,7 @@ def build_segmenter(
         except KeyError:
             raise ValueError("The deeplab backend needs ckpt_path (a .pth checkpoint).") from None
 
-        loader_keys = {"model_name", "num_classes", "output_stride", "allow_pickle"}
+        loader_keys = {"model_name", "num_classes", "output_stride", "allow_pickle", "repo_path"}
         loader_kwargs = {k: kwargs.pop(k) for k in loader_keys if k in kwargs}
         # Read, don't pop: the loader materialises the model on a device and the
         # segmenter moves it again, so both need the caller's choice.

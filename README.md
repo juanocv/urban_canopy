@@ -129,9 +129,22 @@ can do.
 
 The first OneFormer run downloads roughly 1.7 GB into `HF_HOME`. Detectron2
 compiles from source (needs `build-essential python3-dev` on Ubuntu, or Visual
-Studio Build Tools on Windows); the DeepLab backend needs VainF's
-`DeepLabV3Plus-Pytorch` checkout importable as `network` plus a Cityscapes
-checkpoint — see [`docs/reproducibility.md`](docs/reproducibility.md).
+Studio Build Tools on Windows). See
+[`docs/reproducibility.md`](docs/reproducibility.md) for both.
+
+**DeepLab users:** VainF's `DeepLabV3Plus-Pytorch` is research code, not a
+package — it has no `setup.py`, so `pip install -e` on it fails. You do not need
+to clone it either: the pipeline imports only its self-contained `network`
+package, which a helper fetches at a pinned commit (~65 KB, no git):
+
+```bash
+python scripts/fetch-deeplab.py
+tree-ai --image street.jpg --seg deeplab \
+        --deeplab-repo ./DeepLabV3Plus-network --ckpt <cityscapes-weights.pth>
+```
+
+`--deeplab-repo` also accepts a full or sparse clone if you have one. See
+[`docs/reproducibility.md`](docs/reproducibility.md#backend-specific-setup).
 
 **Detectron2 users:** it imports `pkg_resources`, which setuptools removed in
 version 81, so a current environment fails with

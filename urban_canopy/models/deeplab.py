@@ -16,6 +16,7 @@ MobileNet checkpoint, against tens of seconds for OneFormer).
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -159,6 +160,46 @@ def infer_model_name(ckpt_path: str | Path) -> str | None:
     return None
 
 
+def import_deeplab_modeling(repo_path: str | Path | None = None):
+    """
+    Import VainF's ``network.modeling``, optionally from a checkout directory.
+
+    Upstream ships a research repository, not a Python package: there is no
+    ``setup.py`` or ``pyproject.toml``, so ``pip install -e`` on it fails with
+    "does not appear to be a Python project". The supported ways to reach it are
+    therefore to point *repo_path* at the clone, or to put the clone on
+    ``sys.path`` yourself. Nothing is installed and the checkout is not modified.
+    """
+    import importlib
+
+    if repo_path is not None:
+        root = Path(repo_path).expanduser().resolve()
+        if not root.is_dir():
+            raise FileNotFoundError(f"DeepLab repository not found: {root}")
+        if not (root / "network").is_dir():
+            raise FileNotFoundError(
+                f"{root} has no 'network' directory, so it is not a "
+                "DeepLabV3Plus-Pytorch checkout. Point --deeplab-repo at the "
+                "repository root (the folder containing network/, datasets/, main.py)."
+            )
+        # Prepend so a checkout always wins over a stale copy already on the path.
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+
+    try:
+        return importlib.import_module("network.modeling")
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "The DeepLab backend needs VainF's DeepLabV3Plus-Pytorch checkout, whose "
+            "'network' package is not importable. Clone it and pass its path with "
+            "--deeplab-repo (or deeplab_repo=...):\n"
+            "  git clone https://github.com/VainF/DeepLabV3Plus-Pytorch\n"
+            "  tree-ai --seg deeplab --deeplab-repo ./DeepLabV3Plus-Pytorch --ckpt <weights.pth>\n"
+            "Do not run `pip install -e` on it: upstream ships no setup.py, so that "
+            "fails with 'does not appear to be a Python project'."
+        ) from exc
+
+
 def load_deeplab_checkpoint(
     ckpt_path: str | Path,
     *,
@@ -167,16 +208,16 @@ def load_deeplab_checkpoint(
     output_stride: int = 16,
     device: str | None = None,
     allow_pickle: bool = True,
+    repo_path: str | Path | None = None,
 ) -> torch.nn.Module:
     """Load a DeepLabV3+ checkpoint into the architecture it belongs to."""
-    import importlib
     import pickle
 
     ckpt = Path(ckpt_path).expanduser()
     if not ckpt.exists():
         raise FileNotFoundError(f"Model checkpoint not found: {ckpt}")
 
-    modeling = importlib.import_module("network.modeling")
+    modeling = import_deeplab_modeling(repo_path)
     if model_name not in modeling.__dict__:
         raise ValueError(f"{model_name} not found in network.modeling")
 

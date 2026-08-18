@@ -99,6 +99,7 @@ def build_segmenter_from_args(args, device: str):
             taxonomy=taxonomy,
             allow_pickle=True,
             device=device,
+            repo_path=str(args.deeplab_repo) if args.deeplab_repo else None,
         )
 
     raise ValueError(f"Unknown backend: {args.seg!r}")

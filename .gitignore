@@ -39,6 +39,7 @@ urban_canopy/models/checkpoints/
 
 # Third-party model checkouts kept outside the package build
 DeepLabV3Plus-Pytorch/
+DeepLabV3Plus-network/
 detectron2/
 OneFormer/
 
