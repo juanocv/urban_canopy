@@ -1,0 +1,39 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Generated artifacts
+artifacts_out/
+debug_out/
+/*.png
+/*.jpg
+/*.jpeg
+predictions*.json
+evaluation*.json
+
+# Python cache/test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Environments
+venv/
+.venv/
+
+# Local datasets and model checkpoints
+data/
+checkpoints/
+urban_canopy/models/checkpoints/
+
+# Third-party model checkouts kept outside the package build
+DeepLabV3Plus-Pytorch/
+detectron2/
+OneFormer/
