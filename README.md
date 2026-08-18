@@ -67,7 +67,26 @@ urban_canopy/processing/   Coverage, refinement, aggregation, instance heuristic
 urban_canopy/evaluation/   COCO ground truth, metrics, prediction interchange
 urban_canopy/tests/        Offline, CPU-only unit tests
 docs/                      Architecture, annotation protocol, evaluation method
+notebooks/                 Two worked examples, runnable without an API key
+samples/images/            Small curated image set for trying the pipeline
 ```
+
+## Trying it without an API key
+
+`samples/images/` holds seven curated frames spanning 0% to 40% canopy —
+including a no-trees negative case and a four-heading sweep of one location.
+`notebooks/` walks through them:
+
+```bash
+python -m pip install -e ".[ml,notebooks]"
+jupyter lab notebooks/
+```
+
+- [`01_getting_started.ipynb`](notebooks/01_getting_started.ipynb) — one image
+  end to end: the indicator, the tree/vegetation split, raw vs refined masks,
+  and the refinement growth guard.
+- [`02_multiview_and_evaluation.ipynb`](notebooks/02_multiview_and_evaluation.ipynb)
+  — multi-view aggregation and the three evaluation levels.
 
 ## Setup
 
@@ -160,16 +179,41 @@ Address, multi-view with a known street bearing:
 tree-ai "Av. Paulista 1578, Sao Paulo" --multi-view --reference-heading 45 --offsets 90,270
 ```
 
-Export everything an evaluation or audit needs:
+Export everything an evaluation or audit needs — the flags take no path, and
+everything lands in this run's directory:
 
 ```bash
-tree-ai --image street.jpg --save-artifacts --outdir artifacts_out --metrics-json run.json --csv run.csv --predictions-json predictions.json
+tree-ai --image street.jpg --save-artifacts --metrics-json --csv --predictions-json
 ```
+
+### Where results go
+
+Each invocation gets its own directory under `--outdir` (default
+`artifacts_out/`), named after the timestamp and the backend:
+
+```text
+artifacts_out/
+  20260818-104512_oneformer/
+    run.json            manifest, aggregate, every view
+    views.csv           one row per view
+    predictions.json    for `tree-ai evaluate`
+    views/
+      000_street/       rgb.png  mask_raw.png  mask_refined.png
+                        overlay_tree.png  instances.png  metrics.json
+      001_...           further views, in acquisition order
+```
+
+Runs accumulate instead of overwriting, so analysing one image with OneFormer
+and then with Detectron2 leaves both results side by side — which is the whole
+point of supporting several backends. Name a run yourself with `--run-name`, and
+pass an explicit path to any export flag (`--csv results.csv`) to override the
+default location. Nothing is written unless an output flag asks for it.
 
 Evaluate against Roboflow COCO ground truth:
 
 ```bash
-tree-ai evaluate --predictions predictions.json --annotations annotations.json --report-json report.json
+tree-ai evaluate --predictions artifacts_out/<run>/predictions.json \
+                 --annotations annotations.json --report-json report.json
 ```
 
 Check an annotation export before labelling more:

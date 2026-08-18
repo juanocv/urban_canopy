@@ -61,6 +61,13 @@ def _print_aggregate(aggregate) -> None:
         print(f"  note: {note}")
 
 
+def _export_path(value, default: Path) -> Path:
+    """Resolve an export flag to a path, defaulting inside the run directory."""
+    from urban_canopy.cli._argparse import DEFAULT_EXPORT
+
+    return default if value == DEFAULT_EXPORT else Path(value)
+
+
 def _run_analyse(args, parser) -> int:
     from urban_canopy.cli._builder import (
         build_pipeline,
@@ -69,7 +76,13 @@ def _run_analyse(args, parser) -> int:
     )
     from urban_canopy.core.config import build_manifest, set_seed
     from urban_canopy.core.results import results_to_rows, write_rows_csv
-    from urban_canopy.io.artifacts import ArtifactConfig, write_json, write_view_artifacts
+    from urban_canopy.io.artifacts import (
+        ArtifactConfig,
+        RunLayout,
+        make_run_id,
+        write_json,
+        write_view_artifacts,
+    )
 
     has_location = args.address or (args.lat is not None and args.lon is not None)
     if not (args.image or has_location):
@@ -129,13 +142,6 @@ def _run_analyse(args, parser) -> int:
     if multi is not None:
         _print_aggregate(multi.aggregate)
 
-    # ---------------- artifacts / exports ----------------
-    if args.save_artifacts:
-        artifact_config = ArtifactConfig(outdir=args.outdir)
-        for index, result in enumerate(results):
-            write_view_artifacts(result, artifact_config, index=index if len(results) > 1 else None)
-        print(f"\nArtifacts written to {args.outdir}")
-
     manifest = build_manifest(
         config=pipe.config,
         backend=args.seg,
@@ -145,22 +151,41 @@ def _run_analyse(args, parser) -> int:
         device=device,
     )
 
-    if args.metrics_json:
+    # ---------------- artifacts / exports ----------------
+    # The run directory is created only when the run actually writes something,
+    # so a plain analysis leaves no empty folders behind.
+    wants_output = bool(
+        args.save_artifacts or args.metrics_json or args.csv or args.predictions_json
+    )
+    if not wants_output:
+        return 0
+
+    layout = RunLayout.create(args.outdir, make_run_id(args.seg, name=args.run_name))
+    print(f"\nRun directory: {layout.root}")
+
+    if args.save_artifacts:
+        artifact_config = ArtifactConfig(outdir=layout.views)
+        for index, result in enumerate(results):
+            write_view_artifacts(result, artifact_config, index=index)
+        print(f"  views/      {len(results)} view folder(s)")
+
+    # A flag given without a path writes into the run directory; an explicit
+    # path still wins, so existing scripts keep working.
+    if args.metrics_json is not None:
         if multi is not None:
             payload = {"manifest": manifest, **multi.to_dict()}
         else:
-            payload = {
-                "manifest": manifest,
-                "views": [r.to_dict() for r in results],
-            }
-        write_json(payload, args.metrics_json)
-        print(f"Metrics written to {args.metrics_json}")
+            payload = {"manifest": manifest, "views": [r.to_dict() for r in results]}
+        target = _export_path(args.metrics_json, layout.run_json)
+        write_json(payload, target)
+        print(f"  {target.name:<12} run metrics")
 
-    if args.csv:
-        write_rows_csv(results_to_rows(results), args.csv)
-        print(f"CSV written to {args.csv}")
+    if args.csv is not None:
+        target = _export_path(args.csv, layout.views_csv)
+        write_rows_csv(results_to_rows(results), target)
+        print(f"  {target.name:<12} per-view rows")
 
-    if args.predictions_json:
+    if args.predictions_json is not None:
         from urban_canopy.evaluation.predictions import build_predictions, write_predictions
         from urban_canopy.io.image_io import get_exclude_bottom_px
 
@@ -170,8 +195,9 @@ def _run_analyse(args, parser) -> int:
             else get_exclude_bottom_px()
         )
         payload = build_predictions(results, manifest=manifest, exclude_bottom_px=exclude)
-        write_predictions(args.predictions_json, payload)
-        print(f"Predictions written to {args.predictions_json}")
+        target = _export_path(args.predictions_json, layout.predictions_json)
+        write_predictions(target, payload)
+        print(f"  {target.name:<12} for `tree-ai evaluate`")
 
     return 0
 
@@ -285,8 +311,9 @@ def main(argv: list[str] | None = None) -> int:
         return _run_evaluate(args)
     if args.command == "validate-dataset":
         return _run_validate(args)
-    if hasattr(args, "outdir"):
-        Path(args.outdir).mkdir(parents=True, exist_ok=True)
+    # The output directory is created by the run that writes into it, not here:
+    # creating it up front left an empty artifacts_out/ behind on every analysis
+    # that was never asked to save anything.
     return _run_analyse(args, parser)
 
 

@@ -94,11 +94,119 @@ def test_analyse_writes_all_exports(tmp_path, stub_backend):
     assert preds["images"][0]["file_name"] == "frame.jpg"
     assert preds["images"][0]["mask"] is not None
 
-    artifact_dir = tmp_path / "o" / "frame"
+    run_dir = _only_run_dir(tmp_path / "o")
+    artifact_dir = run_dir / "views" / "000_frame"
     assert (artifact_dir / "mask_raw.png").exists()
     assert (artifact_dir / "mask_refined.png").exists()
     assert (artifact_dir / "overlay_tree.png").exists()
     assert (artifact_dir / "metrics.json").exists()
+
+
+def _only_run_dir(outdir):
+    runs = sorted(p for p in outdir.iterdir() if p.is_dir())
+    assert len(runs) == 1, f"expected exactly one run directory, found {runs}"
+    return runs[0]
+
+
+def test_run_directory_is_named_after_timestamp_and_backend(tmp_path, stub_backend):
+    cli_main.main(
+        ["--image", str(_image(tmp_path)), "--outdir", str(tmp_path / "o"), "--save-artifacts"]
+    )
+    run_dir = _only_run_dir(tmp_path / "o")
+    assert run_dir.name.endswith("_oneformer")
+    # 20260818-104512_oneformer
+    assert len(run_dir.name.split("_")[0]) == len("20260818-104512")
+
+
+def test_run_name_overrides_the_generated_id(tmp_path, stub_backend):
+    cli_main.main(
+        [
+            "--image",
+            str(_image(tmp_path)),
+            "--outdir",
+            str(tmp_path / "o"),
+            "--run-name",
+            "baseline run/1",
+            "--save-artifacts",
+        ]
+    )
+    run_dir = _only_run_dir(tmp_path / "o")
+    assert run_dir.name == "baseline-run-1"
+
+
+def test_two_runs_never_overwrite_each_other(tmp_path, stub_backend):
+    """
+    The regression this layout exists for: analysing one image with two backends
+    used to write both into <outdir>/<image>/, and the second destroyed the first.
+    """
+    image = _image(tmp_path)
+    outdir = tmp_path / "o"
+    for name in ("run-a", "run-b"):
+        cli_main.main(
+            [
+                "--image",
+                str(image),
+                "--outdir",
+                str(outdir),
+                "--run-name",
+                name,
+                "--save-artifacts",
+                "--metrics-json",
+            ]
+        )
+
+    runs = sorted(p.name for p in outdir.iterdir() if p.is_dir())
+    assert runs == ["run-a", "run-b"]
+    for name in runs:
+        assert (outdir / name / "run.json").exists()
+        assert (outdir / name / "views" / "000_frame" / "metrics.json").exists()
+
+
+def test_reused_run_name_gets_a_suffix_instead_of_merging(tmp_path, stub_backend):
+    image = _image(tmp_path)
+    outdir = tmp_path / "o"
+    for _ in range(2):
+        cli_main.main(
+            [
+                "--image",
+                str(image),
+                "--outdir",
+                str(outdir),
+                "--run-name",
+                "same",
+                "--save-artifacts",
+            ]
+        )
+    assert sorted(p.name for p in outdir.iterdir()) == ["same", "same-2"]
+
+
+def test_exports_without_a_path_land_in_the_run_directory(tmp_path, stub_backend):
+    outdir = tmp_path / "o"
+    code = cli_main.main(
+        [
+            "--image",
+            str(_image(tmp_path)),
+            "--outdir",
+            str(outdir),
+            "--metrics-json",
+            "--csv",
+            "--predictions-json",
+        ]
+    )
+    assert code == 0
+    run_dir = _only_run_dir(outdir)
+    assert (run_dir / "run.json").exists()
+    assert (run_dir / "views.csv").exists()
+    assert (run_dir / "predictions.json").exists()
+    # Nothing was scattered into the working directory.
+    assert not (tmp_path / "run.json").exists()
+
+
+def test_no_output_requested_creates_no_directory(tmp_path, stub_backend):
+    outdir = tmp_path / "o"
+    code = cli_main.main(["--image", str(_image(tmp_path)), "--outdir", str(outdir)])
+    assert code == 0
+    assert not outdir.exists()
 
 
 def test_analyse_requires_some_input(tmp_path, capsys, stub_backend):

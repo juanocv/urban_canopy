@@ -5,6 +5,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+#: Stored when an export flag is given without a path; the export then lands in
+#: the run directory instead of the working directory.
+DEFAULT_EXPORT = "<run-dir>"
+
 
 def _add_logging_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
@@ -144,7 +148,14 @@ def _add_output_arguments(parser: argparse.ArgumentParser) -> None:
         "--outdir",
         type=Path,
         default=Path("artifacts_out"),
-        help="Folder for audit artifacts (default: artifacts_out)",
+        help="Root folder holding run directories (default: artifacts_out). Each "
+        "run writes to <outdir>/<timestamp>_<backend>/ so runs never overwrite "
+        "one another.",
+    )
+    parser.add_argument(
+        "--run-name",
+        default=None,
+        help="Name this run's directory instead of <timestamp>_<backend>",
     )
     parser.add_argument(
         "--save-artifacts",
@@ -153,21 +164,27 @@ def _add_output_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--metrics-json",
-        type=Path,
+        nargs="?",
+        const=DEFAULT_EXPORT,
         default=None,
-        help="Write the run's results to this JSON path",
+        help="Write run metrics as JSON. Without a path, writes run.json inside "
+        "the run directory.",
     )
     parser.add_argument(
         "--csv",
-        type=Path,
+        nargs="?",
+        const=DEFAULT_EXPORT,
         default=None,
-        help="Write per-view rows to this CSV path",
+        help="Write per-view rows as CSV. Without a path, writes views.csv inside "
+        "the run directory.",
     )
     parser.add_argument(
         "--predictions-json",
-        type=Path,
+        nargs="?",
+        const=DEFAULT_EXPORT,
         default=None,
-        help="Write a predictions file (with RLE masks) for `tree-ai evaluate`",
+        help="Write a predictions file (with RLE masks) for `tree-ai evaluate`. "
+        "Without a path, writes predictions.json inside the run directory.",
     )
 
 

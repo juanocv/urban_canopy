@@ -32,6 +32,11 @@ dev = [
   "pytest>=8.0",
   "ruff>=0.8",
 ]
+notebooks = [
+  "jupyterlab>=4.0",
+  "ipykernel>=6.0",
+  "matplotlib>=3.9",
+]
 ml = [
   "pillow>=10.0",
   "torch",

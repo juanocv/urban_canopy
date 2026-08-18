@@ -3,8 +3,12 @@
 Evaluation runs offline from two files:
 
 ```bash
-tree-ai analyse ... --predictions-json predictions.json     # inference step
-tree-ai evaluate --predictions predictions.json --annotations annotations.json
+# 1. inference: writes artifacts_out/<timestamp>_<backend>/predictions.json
+tree-ai --image street.jpg --predictions-json
+
+# 2. evaluation, offline and repeatable
+tree-ai evaluate --predictions artifacts_out/<run>/predictions.json \
+                 --annotations annotations.json
 ```
 
 The predictions file embeds the run manifest (model, versions, taxonomy,
