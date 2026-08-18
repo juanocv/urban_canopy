@@ -36,8 +36,15 @@ def _add_backend_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--seg",
         default="oneformer",
-        choices=["oneformer", "detectron2", "deeplab"],
+        choices=["oneformer", "mask2former", "detectron2", "deeplab"],
         help="Segmentation backend (default: oneformer)",
+    )
+    parser.add_argument(
+        "--seg-model",
+        default=None,
+        help="HuggingFace checkpoint for --seg oneformer/mask2former, e.g. "
+        "facebook/mask2former-swin-large-cityscapes-semantic. The class space "
+        "(and therefore which classes count as trees) is read from the name.",
     )
     parser.add_argument(
         "--device",

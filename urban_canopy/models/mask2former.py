@@ -1,23 +1,30 @@
 """
-OneFormer adapter (HuggingFace ``transformers``).
+Mask2Former adapter (HuggingFace ``transformers``).
 
-Class-space audit, checked against the OneFormer dataset registration files
-rather than assumed:
+Integrated through ``transformers`` rather than through
+`facebookresearch/Mask2Former <https://github.com/facebookresearch/Mask2Former>`_
+directly. The upstream repository is built on Detectron2 and needs its custom
+CUDA ops (MultiScaleDeformableAttention) compiled from source; the ``transformers``
+port is the same architecture and the same published weights, installs with pip,
+and shares the post-processing API this project already uses for OneFormer.
 
-* ``shi-labs/oneformer_ade20k_*`` predicts the ADE20K-150 space, which has
-  ``tree`` (id 4), ``grass`` (9), ``plant`` (17), ``flower`` (66) and
-  ``palm`` (72) -- so trees *are* separable from other vegetation here.
-* In ADE20K panoptic, ``tree`` carries ``isthing = 0``: it is a **stuff** class,
-  and every tree in a frame collapses into one segment. The 100-class ADE20K
-  instance set contains ``palm`` and ``flower`` but **not** ``tree``.
+Class-space audit -- and the reason this backend earns its place beside
+OneFormer rather than duplicating it: Mask2Former publishes weights for
+**several datasets**, so the same architecture can be compared across class
+spaces, isolating "which classes exist" from "which model predicts them".
 
-Consequence, and the reason this adapter never fills ``instances``: OneFormer on
-ADE20K is a sound baseline for *visible canopy coverage* and cannot support any
-claim about the number of individual trees detected. The panoptic task is still
-available because its segment list is useful for auditing, but the default is
-the semantic task -- panoptic post-processing applies confidence and overlap
-thresholds that silently drop pixels, and a coverage ratio should not depend on
-them.
+* ``*-ade-*``        -- ADE20K-150: ``tree`` (4), ``grass`` (9), ``plant`` (17),
+  ``palm`` (72). Trees separable from other vegetation. ``tree`` is *stuff*.
+* ``*-coco-*``       -- COCO-panoptic: ``tree-merged`` (184), also *stuff*, and
+  already merged across the frame by construction.
+* ``*-cityscapes-*`` -- Cityscapes-19: **no tree class at all**; ``vegetation``
+  merges trees with bushes. Coverage is reported as unavailable unless the
+  caller explicitly enables the vegetation proxy.
+
+Consequently ``instances`` is never populated here, for the same reason as
+OneFormer: in every one of those spaces the tree class is stuff, so no
+checkpoint separates individual trees. Instance-task checkpoints exist
+(``*-instance``) but their thing classes do not include ``tree``.
 """
 
 from __future__ import annotations
@@ -26,7 +33,7 @@ from typing import Literal
 
 import numpy as np
 import torch
-from transformers import OneFormerForUniversalSegmentation, OneFormerProcessor
+from transformers import Mask2FormerForUniversalSegmentation, Mask2FormerImageProcessor
 
 from urban_canopy.log import get_logger
 
@@ -35,16 +42,41 @@ from .taxonomy import Taxonomy, default_taxonomy, infer_class_space
 
 logger = get_logger(__name__)
 
-DEFAULT_MODEL = "shi-labs/oneformer_ade20k_swin_large"
+#: ADE20K semantic: the only published space with a real tree class, and the
+#: semantic task avoids panoptic thresholds influencing a coverage ratio.
+DEFAULT_MODEL = "facebook/mask2former-swin-large-ade-semantic"
 
-#: Kept as a name so existing imports still work; the logic is shared with the
-#: other HuggingFace backend, since both name their checkpoints after the
-#: dataset they were trained on.
-class_space_for_model = infer_class_space
+Task = Literal["semantic", "panoptic"]
 
 
-class OneFormerSegmenter:
-    """Vegetation segmentation through OneFormer."""
+def infer_task(model_name: str) -> Task:
+    """
+    Read the task off the checkpoint name.
+
+    Unlike OneFormer, a Mask2Former checkpoint is trained for one task and its
+    name says which (``...-ade-semantic``, ``...-coco-panoptic``). Asking a
+    semantic checkpoint for panoptic output produces something, but not
+    something meaningful, so the default follows the weights rather than a
+    project-wide preference.
+    """
+    lowered = model_name.lower()
+    if "panoptic" in lowered:
+        return "panoptic"
+    if "instance" in lowered:
+        # Instance checkpoints exist but no published space has tree as a thing
+        # class, so there is nothing to individualise; the semantic reading of
+        # their masks is still a valid coverage measure.
+        logger.warning(
+            "%s is an instance checkpoint, but no Mask2Former class space has tree as a "
+            "thing class. Reading it as semantic coverage; instances stay unavailable.",
+            model_name,
+        )
+        return "semantic"
+    return "semantic"
+
+
+class Mask2FormerSegmenter:
+    """Vegetation segmentation through Mask2Former."""
 
     supports_tree_instances = False
 
@@ -54,25 +86,25 @@ class OneFormerSegmenter:
         *,
         device: str | None = None,
         taxonomy: Taxonomy | None = None,
-        task: Literal["semantic", "panoptic"] = "semantic",
+        task: Task | None = None,
         panoptic_threshold: float = 0.50,
         mask_threshold: float = 0.50,
         overlap_mask_area_threshold: float = 0.80,
     ) -> None:
-        if task not in ("semantic", "panoptic"):
-            raise ValueError(f"task must be 'semantic' or 'panoptic'; got {task!r}")
-
-        self.backend_name = "oneformer"
+        self.backend_name = "mask2former"
         self.model_name = model_name
-        self.class_space = class_space_for_model(model_name)
+        self.class_space = infer_class_space(model_name)
         self.taxonomy = taxonomy or default_taxonomy(self.class_space)
-        self.task = task
+        self.task: Task = task or infer_task(model_name)
+        if self.task not in ("semantic", "panoptic"):
+            raise ValueError(f"task must be 'semantic' or 'panoptic'; got {self.task!r}")
+
         self._panoptic_threshold = panoptic_threshold
         self._mask_threshold = mask_threshold
         self._overlap_mask_area_threshold = overlap_mask_area_threshold
 
-        self.processor = OneFormerProcessor.from_pretrained(model_name)
-        self.model = OneFormerForUniversalSegmentation.from_pretrained(model_name)
+        self.processor = Mask2FormerImageProcessor.from_pretrained(model_name)
+        self.model = Mask2FormerForUniversalSegmentation.from_pretrained(model_name)
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device).eval()
 
@@ -87,7 +119,7 @@ class OneFormerSegmenter:
         pil = Image.fromarray(np.asarray(img_rgb))
         height, width = img_rgb.shape[:2]
 
-        inputs = self.processor(images=pil, task_inputs=[self.task], return_tensors="pt")
+        inputs = self.processor(images=pil, return_tensors="pt")
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         outputs = self.model(**inputs)
 
@@ -95,8 +127,6 @@ class OneFormerSegmenter:
             label_map, segments, labelled = self._semantic(outputs, (height, width))
         else:
             label_map, segments, labelled = self._panoptic(outputs, (height, width))
-
-        group_masks = build_group_masks(self.taxonomy, labelled, (height, width))
 
         notes = [
             f"{self.model_name} predicts the {self.class_space} class space "
@@ -107,12 +137,22 @@ class OneFormerSegmenter:
                 "ADE20K treats 'tree' as a stuff class, so this backend cannot "
                 "individualise trees; coverage only."
             )
+        elif self.class_space == "coco_panoptic":
+            notes.append(
+                "COCO-panoptic merges all trees into the stuff class 'tree-merged'; "
+                "coverage only, no individual trees."
+            )
+        elif self.class_space == "cityscapes":
+            notes.append(
+                "Cityscapes has no tree class: 'vegetation' merges trees with bushes. "
+                "Tree coverage is unavailable unless the vegetation proxy is enabled."
+            )
 
         return SegmentationOutput(
             backend=self.backend_name,
             class_space=self.class_space,
             taxonomy=self.taxonomy,
-            group_masks=group_masks,
+            group_masks=build_group_masks(self.taxonomy, labelled, (height, width)),
             label_map=label_map,
             segments=segments,
             instances=None,

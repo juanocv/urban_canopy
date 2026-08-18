@@ -8,8 +8,12 @@ from urban_canopy.core.config import CanopyConfig
 from urban_canopy.core.pipeline import CanopyPipeline
 from urban_canopy.core.viewplan import ViewPlanConfig
 from urban_canopy.log import get_logger
-from urban_canopy.models.factory import BACKEND_CLASS_SPACE, build_segmenter
-from urban_canopy.models.taxonomy import load_taxonomy
+from urban_canopy.models.factory import (
+    BACKEND_CLASS_SPACE,
+    CHECKPOINT_DEFINES_CLASS_SPACE,
+    build_segmenter,
+)
+from urban_canopy.models.taxonomy import infer_class_space, load_taxonomy
 from urban_canopy.processing.refinement import RefinementConfig
 
 logger = get_logger(__name__)
@@ -51,16 +55,30 @@ def resolve_device(requested: str, parser) -> str:
 
 def build_segmenter_from_args(args, device: str):
     """Construct the requested backend with its taxonomy."""
-    class_space = BACKEND_CLASS_SPACE[args.seg]
+    model_name = getattr(args, "seg_model", None)
+
+    # OneFormer and Mask2Former publish weights for several datasets, so the
+    # class space -- and therefore which classes count as trees -- follows the
+    # checkpoint, not the backend. Reading it off a fixed per-backend table would
+    # silently apply an ADE20K taxonomy to a Cityscapes checkpoint, which has no
+    # tree class at all.
+    if args.seg in CHECKPOINT_DEFINES_CLASS_SPACE and model_name:
+        class_space = infer_class_space(model_name)
+        logger.info("Class space inferred from %s: %s", model_name, class_space)
+    else:
+        class_space = BACKEND_CLASS_SPACE[args.seg]
+
     taxonomy = load_taxonomy(args.taxonomy, class_space=class_space)
 
-    if args.seg == "oneformer":
-        return build_segmenter(
-            "oneformer",
-            device=device,
-            taxonomy=taxonomy,
-            task=args.seg_task,
-        )
+    if args.seg in ("oneformer", "mask2former"):
+        kwargs = {"device": device, "taxonomy": taxonomy}
+        if model_name:
+            kwargs["model_name"] = model_name
+        if args.seg == "oneformer":
+            # OneFormer takes the task per call; Mask2Former's is fixed by the
+            # checkpoint and inferred from its name.
+            kwargs["task"] = args.seg_task
+        return build_segmenter(args.seg, **kwargs)
 
     if args.seg == "detectron2":
         if args.d2_config and args.d2_weights:

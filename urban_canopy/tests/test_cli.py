@@ -346,3 +346,55 @@ def test_explicit_path_overrides_the_implied_export(tmp_path, stub_backend):
     # The other two implied exports still land in the run directory.
     assert (run_dir / "run.json").exists()
     assert (run_dir / "predictions.json").exists()
+
+
+def test_seg_model_drives_the_taxonomy(monkeypatch, tmp_path):
+    """
+    A Cityscapes checkpoint must select the Cityscapes taxonomy, not the
+    backend's default ADE20K one. Getting this wrong would report a tree ratio
+    for a class space that has no tree class.
+    """
+    from urban_canopy.cli._argparse import build_parser
+    from urban_canopy.cli._builder import build_segmenter_from_args
+
+    captured = {}
+    monkeypatch.setattr(
+        "urban_canopy.cli._builder.build_segmenter",
+        lambda backend, **kwargs: captured.update(backend=backend, **kwargs) or object(),
+    )
+
+    args = build_parser().parse_args(
+        [
+            "analyse",
+            "--image",
+            "x.jpg",
+            "--seg",
+            "mask2former",
+            "--seg-model",
+            "facebook/mask2former-swin-tiny-cityscapes-semantic",
+        ]
+    )
+    build_segmenter_from_args(args, "cpu")
+
+    assert captured["backend"] == "mask2former"
+    assert captured["model_name"] == "facebook/mask2former-swin-tiny-cityscapes-semantic"
+    assert captured["taxonomy"].class_space == "cityscapes"
+    assert captured["taxonomy"].tree_group is None
+
+
+def test_mask2former_defaults_to_ade20k(monkeypatch):
+    from urban_canopy.cli._argparse import build_parser
+    from urban_canopy.cli._builder import build_segmenter_from_args
+
+    captured = {}
+    monkeypatch.setattr(
+        "urban_canopy.cli._builder.build_segmenter",
+        lambda backend, **kwargs: captured.update(kwargs) or object(),
+    )
+    args = build_parser().parse_args(["analyse", "--image", "x.jpg", "--seg", "mask2former"])
+    build_segmenter_from_args(args, "cpu")
+
+    assert captured["taxonomy"].class_space == "ade20k"
+    # No task is forwarded: a Mask2Former checkpoint's task is fixed by its name.
+    assert "task" not in captured
+    assert "model_name" not in captured

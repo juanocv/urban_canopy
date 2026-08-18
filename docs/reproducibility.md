@@ -5,6 +5,7 @@
 | Backend | Weights source | Cache location |
 |---|---|---|
 | OneFormer | `shi-labs/oneformer_ade20k_swin_large` via HuggingFace | `HF_HOME` (~1.7 GB) |
+| Mask2Former | `facebook/mask2former-swin-large-ade-semantic` via HuggingFace | `HF_HOME` (~850 MB) |
 | Detectron2 panoptic | model zoo `COCO-PanopticSegmentation/panoptic_fpn_R_50_3x` | `FVCORE_CACHE`/torch cache |
 | DeepLab | VainF `DeepLabV3Plus-Pytorch` Cityscapes checkpoint (manual download) | wherever you keep `--ckpt` |
 
@@ -14,6 +15,33 @@ downloads belong. They are cached; only the first run pays.
 ## Backend-specific setup
 
 **OneFormer** needs only the `ml` extra (`transformers`).
+
+**Mask2Former** also needs only the `ml` extra. It is deliberately *not*
+installed from
+[facebookresearch/Mask2Former](https://github.com/facebookresearch/Mask2Former):
+that repository builds on Detectron2 and compiles custom CUDA ops
+(MultiScaleDeformableAttention) from source, which on Windows means the whole
+MSVC toolchain story again. The `transformers` port is the same architecture
+loading the same published weights, with no build step.
+
+Its value here is that it publishes weights for several datasets, so the class
+space is a property of the checkpoint rather than of the backend:
+
+```bash
+tree-ai --seg mask2former                                  # ADE20K, has a tree class
+tree-ai --seg mask2former --seg-model facebook/mask2former-swin-large-coco-panoptic
+tree-ai --seg mask2former --seg-model facebook/mask2former-swin-tiny-cityscapes-semantic
+```
+
+`--seg-model` also works for `--seg oneformer`. The dataset token in the name
+(`ade`, `coco`, `cityscapes`) selects the taxonomy, and the task token
+(`semantic`, `panoptic`) selects the post-processing — a Mask2Former checkpoint
+is trained for one task, so the name decides rather than a flag. A checkpoint
+naming no recognised dataset, such as the Mapillary Vistas ones, is refused
+rather than guessed at; pass `--taxonomy` to state the mapping yourself.
+
+Use `swin-tiny` checkpoints when trying things out: same interface, a fraction
+of the download.
 
 **Detectron2** compiles from source:
 

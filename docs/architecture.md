@@ -14,7 +14,7 @@ acquisition (Street View / local)
 view plan (single / multi-view)          ← deterministic, config-driven
         │  headings, pitch, fov
         ▼
-segmentation backend                     ← OneFormer | Detectron2 | DeepLab
+segmentation backend            ← OneFormer | Mask2Former | Detectron2 | DeepLab
         │  SegmentationOutput: group masks per taxonomy, instances?, notes
         ▼
 tree-mask resolution                     ← tree class, or explicit vegetation proxy
@@ -45,7 +45,7 @@ ground-truth export (see `docs/evaluation.md`).
 | `io/geo.py` | Pure geographic helpers |
 | `models/taxonomy.py` | Class-space → group mapping; tree vs vegetation kept apart |
 | `models/base.py` | `SegmentationOutput` contract, instance provenance constants |
-| `models/{oneformer,detectron2,deeplab}.py` | Backend adapters |
+| `models/{oneformer,mask2former,detectron2,deeplab}.py` | Backend adapters |
 | `models/factory.py` | Lazy backend construction |
 | `processing/coverage.py` | The indicator; proxy/unavailable semantics |
 | `processing/refinement.py` | Conservative canopy cleanup with growth guard |
@@ -106,6 +106,13 @@ being measured. Heading plans here are deterministic and blind to the imagery.
 
 - **`tree_source`** on every result: `tree_class`, `vegetation_proxy`
   (explicitly requested, flagged) or `unavailable` (never silently zero).
+- **Class space follows the checkpoint**, not the backend, for OneFormer and
+  Mask2Former — both publish weights for several datasets. `infer_class_space()`
+  reads the dataset token out of the model name and selects the taxonomy from
+  it, so a Cityscapes checkpoint gets a taxonomy with no tree group and reports
+  coverage as unavailable. A name that matches no known dataset is refused
+  rather than defaulted: applying an ADE20K taxonomy to unknown classes would
+  mislabel every pixel silently.
 - **`InstanceMask.source`**: `model` or `connected_components_heuristic`;
   metrics and reports carry it through.
 - **Valid pixels**: whatever is excluded (watermark strip) leaves numerator and

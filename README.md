@@ -26,8 +26,9 @@ medium / high greenery") are produced: the continuous ratio is the output.
 2. **View strategy** — single view, or a deterministic multi-view plan
    (reference heading + offsets, or equiangular sampling). Heading selection is
    configuration-driven and independent of the segmentation output.
-3. **Segmentation** — OneFormer (ADE20K), Detectron2 (COCO-panoptic, or a
-   custom instance model), DeepLab (Cityscapes), behind one common contract.
+3. **Segmentation** — OneFormer (ADE20K), Mask2Former (ADE20K, COCO or
+   Cityscapes), Detectron2 (COCO-panoptic, or a custom instance model), DeepLab
+   (Cityscapes), behind one common contract.
 4. **Refinement** — conservative, optional cleanup of the canopy mask (speck
    removal, small-hole filling), with a growth guard that prevents any setting
    from inflating the mask by more than a configured fraction.
@@ -47,9 +48,28 @@ medium / high greenery") are produced: the continuous ratio is the output.
 | Backend | Pretraining | Tree class | Individual trees? |
 |---|---|---|---|
 | OneFormer | ADE20K-150 | `tree` (stuff) + `palm` | No — coverage only |
+| Mask2Former | ADE20K / COCO / Cityscapes | depends on the checkpoint | No — coverage only |
 | Detectron2 panoptic FPN | COCO-panoptic 133 | `tree-merged` (stuff) | No — coverage only |
 | Detectron2 Mask R-CNN (custom weights) | your fine-tune | your `tree` thing class | **Yes** — masks + scores |
 | DeepLab V3+ | Cityscapes-19 | none (`vegetation` merges trees+bushes) | No — and no tree ratio unless `--allow-vegetation-proxy` |
+
+Mask2Former is the one backend published for **several class spaces**, so it can
+hold the architecture fixed and vary the label set — which separates "the model
+disagrees" from "the dataset has no such class". On one sample frame:
+
+```text
+oneformer     tree 31.97%   vegetation 42.68%     (ADE20K)
+mask2former   tree 32.69%   vegetation 42.88%     (ADE20K)
+detectron2    tree 36.21%   vegetation 46.00%     (COCO-panoptic)
+deeplab       tree    n/a   vegetation 34.54%     (Cityscapes — no tree class)
+
+mask2former --seg-model facebook/mask2former-swin-tiny-cityscapes-semantic
+              tree    n/a   vegetation 36.24%     (same model, no tree class)
+```
+
+That last line is the point: the same architecture reports no tree ratio when
+pointed at a class space that cannot express one, rather than quietly returning
+the vegetation number.
 
 Splitting a semantic mask into connected components is available as an
 **explicitly flagged heuristic** (`--instances heuristic`), not as instance
@@ -127,10 +147,12 @@ A venv does not inherit another venv's torch build, so check per environment —
 a `+cpu` version string means `--device cuda` will fail there whatever the GPU
 can do.
 
-The first OneFormer run downloads roughly 1.7 GB into `HF_HOME`. Detectron2
-compiles from source (needs `build-essential python3-dev` on Ubuntu, or Visual
-Studio Build Tools on Windows). See
-[`docs/reproducibility.md`](docs/reproducibility.md) for both.
+OneFormer and Mask2Former install with the `ml` extra and need nothing else;
+their weights download into `HF_HOME` on first use (~1.7 GB for the OneFormer
+default, ~850 MB for the Mask2Former one, far less for the `swin-tiny`
+checkpoints). Detectron2 compiles from source (needs `build-essential
+python3-dev` on Ubuntu, or Visual Studio Build Tools on Windows). See
+[`docs/reproducibility.md`](docs/reproducibility.md) for all of them.
 
 **DeepLab users:** VainF's `DeepLabV3Plus-Pytorch` is research code, not a
 package — it has no `setup.py`, so `pip install -e` on it fails. You do not need

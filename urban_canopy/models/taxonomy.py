@@ -20,6 +20,7 @@ Two rules are enforced by construction:
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable
@@ -31,6 +32,7 @@ __all__ = [
     "COCO_PANOPTIC",
     "CITYSCAPES",
     "default_taxonomy",
+    "infer_class_space",
     "load_taxonomy",
     "normalise_label",
 ]
@@ -183,6 +185,46 @@ CITYSCAPES = Taxonomy(
 )
 
 _BUILTIN = {t.class_space: t for t in (ADE20K, COCO_PANOPTIC, CITYSCAPES)}
+
+#: Dataset tokens that appear in HuggingFace checkpoint names, mapped to the
+#: class space they imply. Both naming conventions in use are covered:
+#: ``shi-labs/oneformer_ade20k_swin_large`` and
+#: ``facebook/mask2former-swin-large-ade-semantic``.
+_DATASET_TOKENS = {
+    "ade": "ade20k",
+    "ade20k": "ade20k",
+    "coco": "coco_panoptic",
+    "cityscapes": "cityscapes",
+}
+
+
+def infer_class_space(model_name: str) -> str:
+    """
+    Work out which class space a checkpoint predicts, from its name.
+
+    Matching is on whole tokens rather than substrings: ``"ade"`` is three
+    characters and would otherwise match inside unrelated words, silently
+    selecting a taxonomy whose tree class does not exist in the model.
+
+    Raises when the name says nothing recognisable -- guessing here would
+    mislabel every pixel the run reports.
+    """
+    tokens = {t for t in re.split(r"[^a-z0-9]+", str(model_name).lower()) if t}
+    matched = {space for token, space in _DATASET_TOKENS.items() if token in tokens}
+
+    if len(matched) == 1:
+        return matched.pop()
+    if not matched:
+        raise ValueError(
+            f"Cannot tell which dataset the checkpoint {model_name!r} was trained on, "
+            f"so the tree classes are unknown. Recognised tokens: "
+            f"{', '.join(sorted(_DATASET_TOKENS))}. Pass an explicit taxonomy "
+            "(--taxonomy) to state the mapping yourself."
+        )
+    raise ValueError(
+        f"The checkpoint name {model_name!r} names more than one dataset "
+        f"({', '.join(sorted(matched))}); pass --taxonomy to disambiguate."
+    )
 
 
 def default_taxonomy(class_space: str) -> Taxonomy:

@@ -11,19 +11,34 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-BACKENDS = ("oneformer", "detectron2", "deeplab")
+BACKENDS = ("oneformer", "mask2former", "detectron2", "deeplab")
 
-#: Class space each backend predicts, before any per-run override.
+#: Backends whose class space follows the checkpoint rather than the backend:
+#: they publish weights for several datasets, so the taxonomy has to be resolved
+#: from the model name (:func:`urban_canopy.models.taxonomy.infer_class_space`)
+#: instead of read off a fixed table.
+CHECKPOINT_DEFINES_CLASS_SPACE = ("oneformer", "mask2former")
+
+#: Class space each backend predicts with its *default* checkpoint. For the
+#: backends above this is only the default; see BACKEND_DEFAULT_MODEL.
 BACKEND_CLASS_SPACE = {
     "oneformer": "ade20k",
+    "mask2former": "ade20k",
     "detectron2": "coco_panoptic",
     "deeplab": "cityscapes",
 }
 
+#: Default HuggingFace checkpoint for the backends that take one.
+BACKEND_DEFAULT_MODEL = {
+    "oneformer": "shi-labs/oneformer_ade20k_swin_large",
+    "mask2former": "facebook/mask2former-swin-large-ade-semantic",
+}
+
 #: Whether a backend, in its default configuration, can separate individual
-#: trees. All three cannot: see the audit in each adapter's module docstring.
+#: trees. None of them can: see the audit in each adapter's module docstring.
 BACKEND_SUPPORTS_TREE_INSTANCES = {
     "oneformer": False,
+    "mask2former": False,
     "detectron2": False,  # True only in mode="instance" with custom weights
     "deeplab": False,
 }
@@ -76,6 +91,17 @@ def build_segmenter(
                 exc,
             )
         return OneFormerSegmenter(**kwargs)
+
+    if backend == "mask2former":
+        try:
+            from .mask2former import Mask2FormerSegmenter
+        except ModuleNotFoundError as exc:
+            _optional_import_error(
+                "The Mask2Former segmentation backend",
+                'Install the ML extra with `python -m pip install -e ".[ml]"`.',
+                exc,
+            )
+        return Mask2FormerSegmenter(**kwargs)
 
     if backend == "detectron2":
         # Construction is inside the guard, not just the import: Detectron2 defers
