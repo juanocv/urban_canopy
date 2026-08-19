@@ -4,8 +4,9 @@ import hashlib
 import pickle
 from types import SimpleNamespace
 
-import torch
 import pytest
+
+torch = pytest.importorskip("torch")
 
 import urban_canopy.models.deeplab as deeplab
 

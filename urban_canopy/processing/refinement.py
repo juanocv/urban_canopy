@@ -32,6 +32,12 @@ import cv2
 import numpy as np
 
 from urban_canopy.log import debug_event, get_logger
+from urban_canopy.validation import (
+    MAX_MORPH_KERNEL_PX,
+    validate_bool,
+    validate_int_range,
+    validate_probability,
+)
 
 logger = get_logger(__name__)
 
@@ -63,6 +69,37 @@ class RefinementConfig:
     #: Guard: maximum fractional area growth the additive steps may cause,
     #: relative to the raw mask. Exceeding it rolls back to removal-only.
     max_area_growth_frac: float = 0.05
+
+    def __post_init__(self) -> None:
+        validate_bool(self.enabled, name="enabled")
+        validate_int_range(
+            self.min_component_area_px,
+            name="min_component_area_px",
+            minimum=0,
+            maximum=2**31 - 1,
+        )
+        if self.min_component_area_frac is not None:
+            validate_probability(
+                self.min_component_area_frac,
+                name="min_component_area_frac",
+            )
+        validate_int_range(
+            self.max_hole_area_px,
+            name="max_hole_area_px",
+            minimum=0,
+            maximum=2**31 - 1,
+        )
+        for name, value in (
+            ("open_kernel_px", self.open_kernel_px),
+            ("close_kernel_px", self.close_kernel_px),
+        ):
+            validate_int_range(
+                value,
+                name=name,
+                minimum=0,
+                maximum=MAX_MORPH_KERNEL_PX,
+            )
+        validate_probability(self.max_area_growth_frac, name="max_area_growth_frac")
 
     def area_floor(self, shape: tuple[int, int]) -> int:
         floor = int(self.min_component_area_px)

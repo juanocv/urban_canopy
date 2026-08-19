@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable
@@ -35,6 +36,7 @@ __all__ = [
     "infer_class_space",
     "load_taxonomy",
     "normalise_label",
+    "validate_taxonomy_class_space",
 ]
 
 CLASS_SPACES = ("ade20k", "coco_panoptic", "cityscapes")
@@ -50,6 +52,8 @@ def normalise_label(label: str) -> tuple[str, ...]:
     first, then each comma-separated token.
     """
     text = " ".join(str(label).strip().lower().split())
+    if not text:
+        return ()
     tokens = [t.strip() for t in text.split(",") if t.strip()]
     out: list[str] = [text]
     out.extend(t for t in tokens if t != text)
@@ -62,6 +66,20 @@ class ClassGroup:
 
     name: str
     aliases: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        name = str(self.name).strip()
+        if not name:
+            raise ValueError("Taxonomy group names cannot be empty.")
+        aliases = tuple(
+            dict.fromkeys(
+                normalised for alias in self.aliases for normalised in normalise_label(alias)
+            )
+        )
+        if not aliases:
+            raise ValueError(f"Taxonomy group {name!r} needs at least one non-empty alias.")
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "aliases", aliases)
 
     def matches(self, label: str) -> bool:
         candidates = set(normalise_label(label))
@@ -81,9 +99,76 @@ class Taxonomy:
     vegetation_groups: tuple[str, ...]
     #: Group offered as an *explicit* stand-in when ``tree_group`` is None.
     tree_proxy_group: str | None = None
+    #: Explicit resolution for an alias intentionally shared by groups.
+    #: Stored as ``((alias, preferred_group), ...)`` to keep the frozen object
+    #: immutable and JSON-serialisable.
+    alias_priority: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
-        names = {g.name for g in self.groups}
+        class_space = str(self.class_space).strip().lower()
+        if not class_space:
+            raise ValueError("class_space cannot be empty.")
+        object.__setattr__(self, "class_space", class_space)
+
+        groups = tuple(self.groups)
+        if not all(isinstance(group, ClassGroup) for group in groups):
+            raise ValueError("groups must contain ClassGroup objects only.")
+        object.__setattr__(self, "groups", groups)
+        object.__setattr__(self, "vegetation_groups", tuple(self.vegetation_groups))
+
+        canonical_names: dict[str, str] = {}
+        for group in self.groups:
+            key = group.name.casefold()
+            if key in canonical_names:
+                raise ValueError(f"Duplicate taxonomy group name: {group.name!r}.")
+            canonical_names[key] = group.name
+        names = set(canonical_names.values())
+
+        priorities: dict[str, str] = {}
+        raw_priorities = (
+            self.alias_priority.items()
+            if isinstance(self.alias_priority, Mapping)
+            else self.alias_priority
+        )
+        for raw_alias, raw_group in raw_priorities:
+            aliases = normalise_label(raw_alias)
+            if len(aliases) != 1:
+                raise ValueError(
+                    f"alias_priority key {raw_alias!r} must identify one normalised alias."
+                )
+            try:
+                group_name = canonical_names[str(raw_group).strip().casefold()]
+            except KeyError:
+                raise ValueError(
+                    f"alias_priority maps {raw_alias!r} to unknown group {raw_group!r}."
+                ) from None
+            if aliases[0] in priorities:
+                raise ValueError(f"Duplicate alias_priority entry for {aliases[0]!r}.")
+            priorities[aliases[0]] = group_name
+        object.__setattr__(self, "alias_priority", tuple(priorities.items()))
+
+        owners: dict[str, list[str]] = {}
+        for group in self.groups:
+            for alias in group.aliases:
+                owners.setdefault(alias, []).append(group.name)
+        for alias, preferred in priorities.items():
+            alias_owners = owners.get(alias, [])
+            if not alias_owners:
+                raise ValueError(f"alias_priority names unknown alias {alias!r}; no group owns it.")
+            if preferred not in alias_owners:
+                raise ValueError(
+                    f"alias_priority for {alias!r} selects {preferred!r}, which does "
+                    f"not own that alias ({alias_owners})."
+                )
+        for alias, groups in owners.items():
+            if len(groups) <= 1:
+                continue
+            preferred = priorities.get(alias)
+            if preferred is None:
+                raise ValueError(
+                    f"Alias {alias!r} belongs to multiple groups {groups}; add an "
+                    "alias_priority entry to resolve it explicitly."
+                )
         if self.tree_group is not None and self.tree_group not in names:
             raise ValueError(f"tree_group={self.tree_group!r} is not one of {sorted(names)}")
         if self.tree_proxy_group is not None and self.tree_proxy_group not in names:
@@ -104,8 +189,13 @@ class Taxonomy:
 
     def group_for_label(self, label: str) -> str | None:
         """Group a predicted class name belongs to, or None if it is not vegetation."""
+        candidates = normalise_label(label)
+        priorities = dict(self.alias_priority)
+        for alias in candidates:
+            if alias in priorities:
+                return priorities[alias]
         for group in self.groups:
-            if group.matches(label):
+            if any(alias in candidates for alias in group.aliases):
                 return group.name
         return None
 
@@ -119,20 +209,25 @@ class Taxonomy:
             "tree_group": self.tree_group,
             "vegetation_groups": list(self.vegetation_groups),
             "tree_proxy_group": self.tree_proxy_group,
+            "alias_priority": dict(self.alias_priority),
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Taxonomy":
         groups = tuple(
-            ClassGroup(name=str(g["name"]), aliases=tuple(str(a).lower() for a in g["aliases"]))
+            ClassGroup(name=str(g["name"]), aliases=tuple(str(a) for a in g["aliases"]))
             for g in data["groups"]
         )
+        raw_priority = data.get("alias_priority", {})
+        if not isinstance(raw_priority, dict):
+            raise ValueError("alias_priority must be a JSON object mapping alias to group.")
         return cls(
             class_space=str(data["class_space"]),
             groups=groups,
             tree_group=data.get("tree_group"),
             vegetation_groups=tuple(data.get("vegetation_groups", ())),
             tree_proxy_group=data.get("tree_proxy_group"),
+            alias_priority=tuple((str(alias), str(group)) for alias, group in raw_priority.items()),
         )
 
 
@@ -249,13 +344,25 @@ def load_taxonomy(source: str | Path | dict[str, Any] | None, *, class_space: st
     if source is None:
         return default_taxonomy(class_space)
     if isinstance(source, dict):
-        return Taxonomy.from_dict(source)
-    data = json.loads(Path(source).read_text(encoding="utf-8"))
-    taxonomy = Taxonomy.from_dict(data)
-    if taxonomy.class_space != class_space:
+        taxonomy = Taxonomy.from_dict(source)
+    else:
+        data = json.loads(Path(source).read_text(encoding="utf-8"))
+        taxonomy = Taxonomy.from_dict(data)
+    return validate_taxonomy_class_space(taxonomy, class_space, context="selected backend")
+
+
+def validate_taxonomy_class_space(
+    taxonomy: Taxonomy,
+    class_space: str,
+    *,
+    context: str,
+) -> Taxonomy:
+    """Reject a taxonomy that names a different checkpoint label space."""
+    expected = str(class_space).strip().lower()
+    if taxonomy.class_space != expected:
         raise ValueError(
-            f"Taxonomy file declares class_space={taxonomy.class_space!r} but the "
-            f"selected backend speaks {class_space!r}."
+            f"Taxonomy declares class_space={taxonomy.class_space!r} but {context} "
+            f"speaks {expected!r}."
         )
     return taxonomy
 

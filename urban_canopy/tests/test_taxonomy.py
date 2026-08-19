@@ -5,6 +5,7 @@ import pytest
 from urban_canopy.models.taxonomy import (
     ADE20K,
     CITYSCAPES,
+    ClassGroup,
     COCO_PANOPTIC,
     Taxonomy,
     default_taxonomy,
@@ -74,3 +75,52 @@ def test_invalid_group_reference_fails_fast():
             tree_group="tree",
             vegetation_groups=(),
         )
+
+
+def test_aliases_use_the_same_normalisation_as_predicted_labels():
+    taxonomy = Taxonomy(
+        class_space="custom",
+        groups=(ClassGroup("tree", ("  Palm,   Palm Tree ",)),),
+        tree_group="tree",
+        vegetation_groups=("tree",),
+    )
+    assert taxonomy.group_for_label("PALM TREE") == "tree"
+    assert taxonomy.group_for_label("palm, palm tree") == "tree"
+
+
+def test_duplicate_group_names_are_rejected_case_insensitively():
+    with pytest.raises(ValueError, match="Duplicate taxonomy group"):
+        Taxonomy(
+            class_space="custom",
+            groups=(ClassGroup("tree", ("tree",)), ClassGroup("Tree", ("palm",))),
+            tree_group="tree",
+            vegetation_groups=("tree",),
+        )
+
+
+def test_conflicting_alias_needs_explicit_priority():
+    groups = (
+        ClassGroup("tree", ("plant",)),
+        ClassGroup("shrub", ("plant",)),
+    )
+    with pytest.raises(ValueError, match="multiple groups"):
+        Taxonomy(
+            class_space="custom",
+            groups=groups,
+            tree_group="tree",
+            vegetation_groups=("tree", "shrub"),
+        )
+
+    taxonomy = Taxonomy(
+        class_space="custom",
+        groups=groups,
+        tree_group="tree",
+        vegetation_groups=("tree", "shrub"),
+        alias_priority=(("plant", "shrub"),),
+    )
+    assert taxonomy.group_for_label("PLANT") == "shrub"
+
+
+def test_dict_taxonomy_also_rejects_mismatched_class_space():
+    with pytest.raises(ValueError, match="class_space"):
+        load_taxonomy(ADE20K.to_dict(), class_space="cityscapes")

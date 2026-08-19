@@ -20,10 +20,12 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from urban_canopy.processing.refinement import RefinementConfig
+from urban_canopy.validation import validate_bool, validate_choice, validate_int_range
 
 __all__ = ["CanopyConfig", "build_manifest", "set_seed"]
 
 InstanceMode = Literal["auto", "none", "heuristic"]
+_LAST_REPRODUCIBILITY: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,9 +44,29 @@ class CanopyConfig:
     heuristic_min_area_px: int = 64
     #: Keep the decoded RGB frame on the result. Needed for artifacts and
     #: overlays; turn it off for long batch runs to bound memory.
-    keep_rgb: bool = True
+    keep_rgb: bool = False
     #: Recorded in the manifest and applied by :func:`set_seed`.
     seed: int = 0
+    #: Request deterministic Torch/CUDA algorithms. This is stricter than RNG
+    #: seeding, but still cannot promise identical bits across hardware/stacks.
+    deterministic: bool = False
+
+    def __post_init__(self) -> None:
+        validate_bool(self.allow_vegetation_proxy, name="allow_vegetation_proxy")
+        validate_bool(self.keep_rgb, name="keep_rgb")
+        validate_bool(self.deterministic, name="deterministic")
+        validate_choice(
+            self.instance_mode,
+            name="instance_mode",
+            choices=("auto", "none", "heuristic"),
+        )
+        validate_int_range(
+            self.heuristic_min_area_px,
+            name="heuristic_min_area_px",
+            minimum=0,
+            maximum=2**31 - 1,
+        )
+        validate_int_range(self.seed, name="seed", minimum=0, maximum=2**32 - 1)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -54,33 +76,72 @@ class CanopyConfig:
             "heuristic_min_area_px": self.heuristic_min_area_px,
             "keep_rgb": self.keep_rgb,
             "seed": self.seed,
+            "deterministic": self.deterministic,
         }
 
 
-def set_seed(seed: int) -> None:
+def set_seed(seed: int, *, deterministic: bool = False) -> dict[str, Any]:
     """
     Seed the RNGs that can affect a run.
 
-    Inference here is deterministic in principle, but backends do sample (mask
-    post-processing tie-breaks, any augmentation a custom model carries), and a
-    seed costs nothing to set and everything to reconstruct after the fact.
+    Seeding controls random-number streams. ``deterministic=True`` additionally
+    asks Torch to reject nondeterministic algorithms and configures CUDA/cuDNN
+    knobs. Neither mode promises identical bits across library versions or
+    hardware. ``PYTHONHASHSEED`` is only observed: changing it after interpreter
+    startup would not affect this process, so this function never pretends to.
     """
+    global _LAST_REPRODUCIBILITY
+
+    seed = validate_int_range(seed, name="seed", minimum=0, maximum=2**32 - 1)
+    if deterministic:
+        # Effective when set before CUDA initialisation, which the CLI ensures
+        # by calling this function before device resolution or model loading.
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
     random.seed(seed)
-    os.environ["PYTHONHASHSEED"] = str(seed)
+    status: dict[str, Any] = {
+        "rng_seeded": True,
+        "seed": seed,
+        "deterministic_algorithms_requested": bool(deterministic),
+        "python_hash_seed_env": os.getenv("PYTHONHASHSEED"),
+        "python_hash_seed_changed_at_runtime": False,
+        "python_hash_seed_effective_only_if_set_before_start": True,
+        "bitwise_determinism_guaranteed": False,
+    }
     try:
         import numpy as np
 
         np.random.seed(seed)
+        status["numpy_seeded"] = True
     except ModuleNotFoundError:  # pragma: no cover - numpy is a hard dependency
-        pass
+        status["numpy_seeded"] = False
     try:
         import torch
 
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
+        torch.use_deterministic_algorithms(bool(deterministic))
+        if hasattr(torch.backends, "cudnn"):
+            torch.backends.cudnn.deterministic = bool(deterministic)
+            torch.backends.cudnn.benchmark = False
+        status.update(
+            {
+                "torch_seeded": True,
+                "torch_deterministic_algorithms": bool(
+                    torch.are_deterministic_algorithms_enabled()
+                ),
+                "cudnn_deterministic": bool(getattr(torch.backends.cudnn, "deterministic", False)),
+                "cudnn_benchmark": bool(getattr(torch.backends.cudnn, "benchmark", False)),
+                "cublas_workspace_config": os.getenv("CUBLAS_WORKSPACE_CONFIG"),
+                "cuda_available": bool(torch.cuda.is_available()),
+            }
+        )
     except ModuleNotFoundError:
-        pass
+        status["torch_seeded"] = False
+
+    _LAST_REPRODUCIBILITY = status
+    return dict(status)
 
 
 def _version(package: str) -> str | None:
@@ -88,6 +149,24 @@ def _version(package: str) -> str | None:
         return importlib.metadata.version(package)
     except importlib.metadata.PackageNotFoundError:
         return None
+
+
+def _reproducibility_for(config: CanopyConfig) -> dict[str, Any]:
+    if (
+        _LAST_REPRODUCIBILITY is not None
+        and _LAST_REPRODUCIBILITY.get("seed") == config.seed
+        and _LAST_REPRODUCIBILITY.get("deterministic_algorithms_requested") == config.deterministic
+    ):
+        return dict(_LAST_REPRODUCIBILITY)
+    return {
+        "rng_seeded": False,
+        "seed": config.seed,
+        "deterministic_algorithms_requested": config.deterministic,
+        "python_hash_seed_env": os.getenv("PYTHONHASHSEED"),
+        "python_hash_seed_changed_at_runtime": False,
+        "python_hash_seed_effective_only_if_set_before_start": True,
+        "bitwise_determinism_guaranteed": False,
+    }
 
 
 def build_manifest(
@@ -135,6 +214,7 @@ def build_manifest(
         "taxonomy": taxonomy.to_dict() if taxonomy is not None else None,
         "config": config.to_dict(),
         "seed": config.seed,
+        "reproducibility": _reproducibility_for(config),
     }
     if extra:
         manifest.update(extra)

@@ -31,13 +31,18 @@ from __future__ import annotations
 import os
 import threading
 from contextlib import asynccontextmanager, contextmanager
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from urban_canopy.log import configure_logging, get_logger
+from urban_canopy.validation import (
+    validate_image_size,
+    validate_latitude,
+    validate_longitude,
+)
 
 configure_logging(force=False)
 logger = get_logger(__name__)
@@ -74,15 +79,15 @@ class PipelineRegistry:
     def __init__(self, segmenter: Any, streetview: Any) -> None:
         self._segmenter = segmenter
         self._streetview = streetview
-        self._pipes: dict[tuple[bool, bool], Any] = {}
+        self._pipes: dict[tuple[bool, bool, bool], Any] = {}
         self._lock = threading.Lock()
 
-    def get(self, *, refine: bool, allow_vegetation_proxy: bool):
+    def get(self, *, refine: bool, allow_vegetation_proxy: bool, keep_rgb: bool = False):
         from urban_canopy.core.config import CanopyConfig
         from urban_canopy.core.pipeline import CanopyPipeline
         from urban_canopy.processing.refinement import RefinementConfig
 
-        key = (refine, allow_vegetation_proxy)
+        key = (refine, allow_vegetation_proxy, keep_rgb)
         with self._lock:
             pipe = self._pipes.get(key)
             if pipe is None:
@@ -92,7 +97,7 @@ class PipelineRegistry:
                     config=CanopyConfig(
                         refinement=RefinementConfig(enabled=refine),
                         allow_vegetation_proxy=allow_vegetation_proxy,
-                        keep_rgb=True,
+                        keep_rgb=keep_rgb,
                     ),
                 )
                 self._pipes[key] = pipe
@@ -136,6 +141,8 @@ app.add_middleware(
 # Request / response schemas                                         #
 # ------------------------------------------------------------------ #
 class SingleViewRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
     address: str | None = Field(
         default=None,
         json_schema_extra={"example": "Av. Paulista 1578, Sao Paulo"},
@@ -146,28 +153,72 @@ class SingleViewRequest(BaseModel):
     heading: int = Field(0, ge=0, le=359)
     pitch: int = Field(0, ge=-90, le=90)
     fov: int = Field(90, ge=10, le=120)
-    size: str = Field("640x640", pattern=r"^\d{2,4}x\d{2,4}$")
+    size: str = "640x640"
     refine: bool = True
     allow_vegetation_proxy: bool = False
     return_overlays: bool = Field(
         False, description="Include base64 PNG overlays (RGB, tree overlay, mask)"
     )
 
+    @field_validator("lat")
+    @classmethod
+    def _latitude(cls, value):
+        return None if value is None else validate_latitude(value)
+
+    @field_validator("lon")
+    @classmethod
+    def _longitude(cls, value):
+        return None if value is None else validate_longitude(value)
+
+    @field_validator("size")
+    @classmethod
+    def _size(cls, value):
+        return validate_image_size(value)
+
+    @model_validator(mode="after")
+    def _complete_coordinates(self):
+        if (self.lat is None) != (self.lon is None):
+            raise ValueError("lat and lon must be provided together")
+        return self
+
 
 class MultiViewRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
     address: str | None = None
     lat: float | None = None
     lon: float | None = None
     reference_heading: int = Field(0, ge=0, le=359)
-    mode: str = Field("offsets", pattern="^(offsets|equiangular)$")
-    offsets: list[int] = Field(default_factory=lambda: [0, 90, 180, 270])
+    mode: Literal["offsets", "equiangular"] = "offsets"
+    offsets: list[int] = Field(default_factory=lambda: [0, 90, 180, 270], min_length=1)
     n_views: int = Field(4, ge=1, le=16)
     min_successful_views: int = Field(1, ge=1, le=16)
     pitch: int = Field(0, ge=-90, le=90)
     fov: int = Field(90, ge=10, le=120)
-    size: str = Field("640x640", pattern=r"^\d{2,4}x\d{2,4}$")
+    size: str = "640x640"
     refine: bool = True
     allow_vegetation_proxy: bool = False
+
+    @field_validator("lat")
+    @classmethod
+    def _latitude(cls, value):
+        return None if value is None else validate_latitude(value)
+
+    @field_validator("lon")
+    @classmethod
+    def _longitude(cls, value):
+        return None if value is None else validate_longitude(value)
+
+    @field_validator("size")
+    @classmethod
+    def _size(cls, value):
+        return validate_image_size(value)
+
+    @model_validator(mode="after")
+    def _complete_coordinates(self):
+        if (self.lat is None) != (self.lon is None):
+            raise ValueError("lat and lon must be provided together")
+        return self
 
 
 # ------------------------------------------------------------------ #
@@ -178,7 +229,8 @@ def _resolve_location(req) -> tuple[float, float]:
         return req.lat, req.lon
     if req.address:
         try:
-            return app.state.registry._streetview.geocode(req.address)
+            lat, lon = app.state.registry._streetview.geocode(req.address)
+            return validate_latitude(lat), validate_longitude(lon)
         except Exception as exc:
             raise HTTPException(422, f"Geocoding failed: {exc}") from exc
     raise HTTPException(422, "Either address or lat+lon is required")
@@ -212,7 +264,9 @@ def ping() -> dict[str, str]:
 def analyse_single(req: SingleViewRequest) -> dict[str, Any]:
     lat, lon = _resolve_location(req)
     pipe = app.state.registry.get(
-        refine=req.refine, allow_vegetation_proxy=req.allow_vegetation_proxy
+        refine=req.refine,
+        allow_vegetation_proxy=req.allow_vegetation_proxy,
+        keep_rgb=req.return_overlays,
     )
     with _inference_slot():
         try:
@@ -254,7 +308,9 @@ def analyse_multi(req: MultiViewRequest) -> dict[str, Any]:
             f"planned headings ({planned_count})",
         )
     pipe = app.state.registry.get(
-        refine=req.refine, allow_vegetation_proxy=req.allow_vegetation_proxy
+        refine=req.refine,
+        allow_vegetation_proxy=req.allow_vegetation_proxy,
+        keep_rgb=False,
     )
     with _inference_slot():
         try:

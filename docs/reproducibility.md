@@ -191,7 +191,18 @@ TREE COVERAGE 34.49%  (source=vegetation_proxy)   # with the proxy enabled
 ## Determinism
 
 - Heading plans are pure functions of configuration (`core/viewplan.py`).
-- `--seed` seeds Python, NumPy and torch; the value lands in the manifest.
+- `--seed` seeds Python, NumPy and torch. It does **not** assign
+  `PYTHONHASHSEED`: Python reads that variable before interpreter startup, so a
+  runtime assignment would be misleading and ineffective for the current
+  process.
+- `--deterministic` calls `torch.use_deterministic_algorithms(True)`, disables
+  cuDNN benchmarking, enables deterministic cuDNN behavior and configures the
+  cuBLAS workspace before model/CUDA initialization. An operation without a
+  deterministic implementation may then fail loudly.
+- The manifest separates `rng_seeded` from
+  `deterministic_algorithms_requested`, records the effective Torch/cuDNN/CUDA
+  flags, and always states `bitwise_determinism_guaranteed=false`: versions,
+  drivers and hardware can still change floating-point results.
 - Street View frames are cached by their full parameter set, and the panorama
   id + capture date are recorded per view: Google re-shoots streets, so two
   runs months apart can legitimately differ — the pano id is what tells you
@@ -202,6 +213,18 @@ TREE COVERAGE 34.49%  (source=vegetation_proxy)   # with the proxy enabled
 - Google may serve different imagery for the same coordinates over time. For a
   frozen study, archive the fetched frames (the cache directory) alongside the
   predictions file.
+
+## Validation and clean installations
+
+Runtime configuration rejects non-finite coordinates, out-of-range capture
+parameters and thresholds, malformed/oversized image dimensions, invalid modes
+and negative or excessive morphology kernels. The same dependency-free
+validators back dataclasses, CLI parsing and API schemas.
+
+The regular CI job installs only `dev,api` and verifies that adapter modules
+import without ML dependencies. A separate `ml-import-smoke` job installs the
+`ml` extra. Built wheels exclude `urban_canopy.tests` and are inspected for that
+contract during CI.
 
 ## Google API usage
 

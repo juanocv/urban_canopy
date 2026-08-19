@@ -154,7 +154,9 @@ def config_from_args(args) -> CanopyConfig:
         ),
         allow_vegetation_proxy=args.allow_vegetation_proxy,
         instance_mode=args.instances,
+        keep_rgb=bool(args.save_artifacts),
         seed=args.seed,
+        deterministic=args.deterministic,
     )
 
 

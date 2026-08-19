@@ -133,8 +133,9 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-The base install is enough for the unit tests and package imports. Running real
-segmentation needs the ML layer:
+The base install is enough for the unit tests and package imports: adapter
+modules keep Torch, Transformers, Pillow, Torchvision and Detectron2 imports at
+construction time. Running real segmentation needs the ML layer:
 
 ```bash
 python -m pip install -e ".[ml]"
@@ -262,6 +263,10 @@ asking for one piece on its own — `--csv` alone writes the rows and no images,
 which is what a large batch usually wants — and any of them accepts an explicit
 path (`--csv results.csv`) to place that file elsewhere.
 
+Local-image batches are consumed as an iterator. RGB is disabled unless image
+artifacts are requested; when requested, each view is written immediately and
+its RGB allocation is released before the next result accumulates.
+
 Runs accumulate instead of overwriting, so analysing one image with OneFormer
 and then with Detectron2 leaves both results side by side — which is the whole
 point of supporting several backends. Name a run yourself with `--run-name`.
@@ -296,6 +301,9 @@ Knobs worth knowing:
 - DeepLab loads weights-only checkpoints by default. `--trust-checkpoint`
   enables legacy pickle loading and must only be used for a trusted file.
 - Successful DeepLab runs record the checkpoint SHA-256 in the manifest.
+- `--deterministic` additionally requests deterministic Torch/CUDA algorithms.
+  This is stricter than `--seed`, but the manifest deliberately does not claim
+  bitwise identity across different hardware or library versions.
 
 ## Web API
 
@@ -327,8 +335,8 @@ instances, so the two levels can never disagree about what a tree pixel is.
   [`docs/architecture.md`](docs/architecture.md)
 
 Every prediction file embeds a manifest (package versions, model name, device,
-taxonomy, refinement config, seed), so any reported number can be traced to the
-run that produced it.
+taxonomy, refinement config, RNG seed and deterministic-runtime flags), so any
+reported number can be traced to the run that produced it.
 
 ## Quality checks
 

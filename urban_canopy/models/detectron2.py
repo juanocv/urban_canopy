@@ -20,15 +20,12 @@ from __future__ import annotations
 from typing import Literal, Sequence
 
 import numpy as np
-import torch
-from detectron2.config import get_cfg
-from detectron2.data import MetadataCatalog
-from detectron2.engine import DefaultPredictor
 
 from urban_canopy.log import get_logger
 
 from .base import MODEL_INSTANCES, InstanceMask, Segment, SegmentationOutput, build_group_masks
-from .taxonomy import Taxonomy, default_taxonomy
+from .taxonomy import Taxonomy, default_taxonomy, validate_taxonomy_class_space
+from urban_canopy.validation import validate_probability
 
 logger = get_logger(__name__)
 
@@ -52,7 +49,19 @@ class Detectron2Segmenter:
     ) -> None:
         if mode not in ("panoptic", "instance"):
             raise ValueError(f"mode must be 'panoptic' or 'instance'; got {mode!r}")
+        self.taxonomy = validate_taxonomy_class_space(
+            taxonomy or default_taxonomy(class_space),
+            class_space,
+            context="Detectron2 model",
+        )
+        score_thresh = validate_probability(score_thresh, name="score_thresh")
 
+        import torch
+        from detectron2.config import get_cfg
+        from detectron2.data import MetadataCatalog
+        from detectron2.engine import DefaultPredictor
+
+        self._torch = torch
         cfg = get_cfg()
         cfg.merge_from_file(config_yml)
         cfg.MODEL.WEIGHTS = weights_path
@@ -63,7 +72,6 @@ class Detectron2Segmenter:
         self.mode = mode
         self.backend_name = "detectron2"
         self.class_space = class_space
-        self.taxonomy = taxonomy or default_taxonomy(class_space)
         self.predictor = DefaultPredictor(cfg)
 
         dataset = cfg.DATASETS.TRAIN[0] if cfg.DATASETS.TRAIN else None
@@ -104,6 +112,13 @@ class Detectron2Segmenter:
         device: str | None = None,
     ) -> "Detectron2Segmenter":
         """Build the panoptic baseline from a model-zoo config string."""
+        taxonomy = validate_taxonomy_class_space(
+            taxonomy or default_taxonomy("coco_panoptic"),
+            "coco_panoptic",
+            context="Detectron2 model-zoo checkpoint",
+        )
+        score_thresh = validate_probability(score_thresh, name="score_thresh")
+
         from detectron2 import model_zoo
 
         return cls(
@@ -116,8 +131,11 @@ class Detectron2Segmenter:
             device=device,
         )
 
-    @torch.inference_mode()
     def segment(self, img_rgb: np.ndarray) -> SegmentationOutput:
+        with self._torch.inference_mode():
+            return self._segment(img_rgb)
+
+    def _segment(self, img_rgb: np.ndarray) -> SegmentationOutput:
         # Detectron2 predictors expect BGR when cfg.INPUT.FORMAT is BGR, which is
         # the default for every zoo config.
         img = np.asarray(img_rgb)

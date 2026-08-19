@@ -77,31 +77,33 @@ def _detectron2_hint(exc: ModuleNotFoundError) -> str:
 
 
 def build_segmenter(
-    backend: Literal["oneformer", "detectron2", "deeplab"] = "oneformer",
+    backend: Literal["oneformer", "mask2former", "detectron2", "deeplab"] = "oneformer",
     **kwargs: Any,
 ):
     """Build one segmentation backend by name."""
     if backend == "oneformer":
         try:
             from .oneformer import OneFormerSegmenter
+
+            return OneFormerSegmenter(**kwargs)
         except ModuleNotFoundError as exc:
             _optional_import_error(
                 "The OneFormer segmentation backend",
                 'Install the ML extra with `python -m pip install -e ".[ml]"`.',
                 exc,
             )
-        return OneFormerSegmenter(**kwargs)
 
     if backend == "mask2former":
         try:
             from .mask2former import Mask2FormerSegmenter
+
+            return Mask2FormerSegmenter(**kwargs)
         except ModuleNotFoundError as exc:
             _optional_import_error(
                 "The Mask2Former segmentation backend",
                 'Install the ML extra with `python -m pip install -e ".[ml]"`.',
                 exc,
             )
-        return Mask2FormerSegmenter(**kwargs)
 
     if backend == "detectron2":
         # Construction is inside the guard, not just the import: Detectron2 defers
@@ -129,6 +131,14 @@ def build_segmenter(
             )
 
     if backend == "deeplab":
+        from .taxonomy import validate_taxonomy_class_space
+
+        if kwargs.get("taxonomy") is not None:
+            validate_taxonomy_class_space(
+                kwargs["taxonomy"],
+                "cityscapes",
+                context="DeepLab checkpoint",
+            )
         try:
             from .deeplab import DeepLabSegmenter, load_deeplab_checkpoint
         except ModuleNotFoundError as exc:
@@ -150,7 +160,15 @@ def build_segmenter(
         # segmenter moves it again, so both need the caller's choice.
         if "device" in kwargs:
             loader_kwargs["device"] = kwargs["device"]
-        model = load_deeplab_checkpoint(ckpt, **loader_kwargs)
-        return DeepLabSegmenter(model, **kwargs)
+        try:
+            model = load_deeplab_checkpoint(ckpt, **loader_kwargs)
+            return DeepLabSegmenter(model, **kwargs)
+        except ModuleNotFoundError as exc:
+            _optional_import_error(
+                "The DeepLab segmentation backend",
+                'Install the ML extra with `python -m pip install -e ".[ml]"`; '
+                "see docs/reproducibility.md.",
+                exc,
+            )
 
     raise ValueError(f"Unknown backend: {backend!r}; choose from {', '.join(BACKENDS)}")

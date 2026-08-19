@@ -271,6 +271,21 @@ def test_coords_analysis_needs_a_client(tmp_path):
         pipe.analyse_coords(-23.0, -46.0)
 
 
+def test_local_batch_iterator_is_lazy(monkeypatch):
+    pipe = CanopyPipeline(segmenter=StubSegmenter())
+    calls = []
+
+    def analyse(path):
+        calls.append(path)
+        return path
+
+    monkeypatch.setattr(pipe, "analyse_image", analyse)
+    results = pipe.iter_analyse_images(["a.jpg", "b.jpg"])
+    assert calls == []
+    assert next(results) == "a.jpg"
+    assert calls == ["a.jpg"]
+
+
 def test_address_records_the_address(tmp_path, monkeypatch):
     pipe = CanopyPipeline(
         segmenter=StubSegmenter(),

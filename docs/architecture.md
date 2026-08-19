@@ -38,6 +38,7 @@ ground-truth export (see `docs/evaluation.md`).
 | `core/pipeline.py` | Orchestration; dependency-injected segmenter + Street View client |
 | `core/viewplan.py` | Deterministic heading plans (fixed / offsets / equiangular) |
 | `core/config.py` | `CanopyConfig`, seeds, run manifest |
+| `validation.py` | Dependency-free limits shared by dataclasses, CLI and API |
 | `core/results.py` | View results, structured heading failures, CSV rows |
 | `io/streetview.py` | GSV client, cache, geocoding, `ImageRequest`, pano metadata |
 | `io/image_io.py` | Decoding to RGB and overlays |
@@ -47,7 +48,7 @@ ground-truth export (see `docs/evaluation.md`).
 | `models/taxonomy.py` | Class-space → group mapping; tree vs vegetation kept apart |
 | `models/base.py` | `SegmentationOutput` contract, instance provenance constants |
 | `models/{oneformer,mask2former,detectron2,deeplab}.py` | Backend adapters |
-| `models/factory.py` | Lazy backend construction |
+| `models/factory.py` | Lazy backend construction; optional ML imports happen at construction |
 | `processing/coverage.py` | The indicator; proxy/unavailable semantics |
 | `processing/refinement.py` | Conservative canopy cleanup with growth guard |
 | `processing/instances.py` | Connected-component heuristic, explicitly flagged |
@@ -114,6 +115,10 @@ being measured. Heading plans here are deterministic and blind to the imagery.
   coverage as unavailable. A name that matches no known dataset is refused
   rather than defaulted: applying an ADE20K taxonomy to unknown classes would
   mislabel every pixel silently.
+- **Taxonomy consistency**: every adapter rejects a taxonomy from another class
+  space before importing or downloading its model. Aliases use the same
+  normalization as predicted labels; duplicate group names and ambiguous
+  aliases are rejected unless `alias_priority` resolves the conflict.
 - **`InstanceMask.source`**: `model` or `connected_components_heuristic`;
   metrics and reports carry it through.
 - **Complete-frame denominator**: Street View frames, including attribution and
@@ -130,3 +135,9 @@ being measured. Heading plans here are deterministic and blind to the imagery.
   exported as JSON `null`; `NaN` and `Infinity` are never written.
 - **Atomic outputs**: cache frames, JSON, CSV and image artifacts are written to
   a sibling temporary file and atomically replace the target only after success.
+- **Bounded RGB retention**: `keep_rgb` defaults to false. CLI batches yield one
+  result at a time and release RGB after per-view artifacts; the API retains it
+  only for `/analyse/single` requests that ask for overlays.
+- **Reproducibility levels**: RNG seeding and deterministic Torch algorithms are
+  separate manifest fields. `PYTHONHASHSEED` is observed, never assigned after
+  startup, and cross-stack bitwise identity is explicitly not guaranteed.

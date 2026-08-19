@@ -32,13 +32,17 @@ from __future__ import annotations
 from typing import Literal
 
 import numpy as np
-import torch
-from transformers import Mask2FormerForUniversalSegmentation, Mask2FormerImageProcessor
 
 from urban_canopy.log import get_logger
 
 from .base import Segment, SegmentationOutput, build_group_masks
-from .taxonomy import Taxonomy, default_taxonomy, infer_class_space
+from .taxonomy import (
+    Taxonomy,
+    default_taxonomy,
+    infer_class_space,
+    validate_taxonomy_class_space,
+)
+from urban_canopy.validation import validate_probability
 
 logger = get_logger(__name__)
 
@@ -94,15 +98,30 @@ class Mask2FormerSegmenter:
         self.backend_name = "mask2former"
         self.model_name = model_name
         self.class_space = infer_class_space(model_name)
-        self.taxonomy = taxonomy or default_taxonomy(self.class_space)
+        self.taxonomy = validate_taxonomy_class_space(
+            taxonomy or default_taxonomy(self.class_space),
+            self.class_space,
+            context=f"Mask2Former checkpoint {model_name!r}",
+        )
         self.task: Task = task or infer_task(model_name)
         if self.task not in ("semantic", "panoptic"):
             raise ValueError(f"task must be 'semantic' or 'panoptic'; got {self.task!r}")
 
-        self._panoptic_threshold = panoptic_threshold
-        self._mask_threshold = mask_threshold
-        self._overlap_mask_area_threshold = overlap_mask_area_threshold
+        self._panoptic_threshold = validate_probability(
+            panoptic_threshold, name="panoptic_threshold"
+        )
+        self._mask_threshold = validate_probability(mask_threshold, name="mask_threshold")
+        self._overlap_mask_area_threshold = validate_probability(
+            overlap_mask_area_threshold,
+            name="overlap_mask_area_threshold",
+        )
 
+        import torch
+        from PIL import Image
+        from transformers import Mask2FormerForUniversalSegmentation, Mask2FormerImageProcessor
+
+        self._torch = torch
+        self._Image = Image
         self.processor = Mask2FormerImageProcessor.from_pretrained(model_name)
         self.model = Mask2FormerForUniversalSegmentation.from_pretrained(model_name)
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -112,11 +131,12 @@ class Mask2FormerSegmenter:
     def _id2label(self) -> dict[int, str]:
         return getattr(self.model.config, "id2label", {}) or {}
 
-    @torch.inference_mode()
     def segment(self, img_rgb: np.ndarray) -> SegmentationOutput:
-        from PIL import Image
+        with self._torch.inference_mode():
+            return self._segment(img_rgb)
 
-        pil = Image.fromarray(np.asarray(img_rgb))
+    def _segment(self, img_rgb: np.ndarray) -> SegmentationOutput:
+        pil = self._Image.fromarray(np.asarray(img_rgb))
         height, width = img_rgb.shape[:2]
 
         inputs = self.processor(images=pil, return_tensors="pt")

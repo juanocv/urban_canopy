@@ -25,13 +25,17 @@ from __future__ import annotations
 from typing import Literal
 
 import numpy as np
-import torch
-from transformers import OneFormerForUniversalSegmentation, OneFormerProcessor
 
 from urban_canopy.log import get_logger
 
 from .base import Segment, SegmentationOutput, build_group_masks
-from .taxonomy import Taxonomy, default_taxonomy, infer_class_space
+from .taxonomy import (
+    Taxonomy,
+    default_taxonomy,
+    infer_class_space,
+    validate_taxonomy_class_space,
+)
+from urban_canopy.validation import validate_probability
 
 logger = get_logger(__name__)
 
@@ -65,12 +69,27 @@ class OneFormerSegmenter:
         self.backend_name = "oneformer"
         self.model_name = model_name
         self.class_space = class_space_for_model(model_name)
-        self.taxonomy = taxonomy or default_taxonomy(self.class_space)
+        self.taxonomy = validate_taxonomy_class_space(
+            taxonomy or default_taxonomy(self.class_space),
+            self.class_space,
+            context=f"OneFormer checkpoint {model_name!r}",
+        )
         self.task = task
-        self._panoptic_threshold = panoptic_threshold
-        self._mask_threshold = mask_threshold
-        self._overlap_mask_area_threshold = overlap_mask_area_threshold
+        self._panoptic_threshold = validate_probability(
+            panoptic_threshold, name="panoptic_threshold"
+        )
+        self._mask_threshold = validate_probability(mask_threshold, name="mask_threshold")
+        self._overlap_mask_area_threshold = validate_probability(
+            overlap_mask_area_threshold,
+            name="overlap_mask_area_threshold",
+        )
 
+        import torch
+        from PIL import Image
+        from transformers import OneFormerForUniversalSegmentation, OneFormerProcessor
+
+        self._torch = torch
+        self._Image = Image
         self.processor = OneFormerProcessor.from_pretrained(model_name)
         self.model = OneFormerForUniversalSegmentation.from_pretrained(model_name)
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -80,11 +99,12 @@ class OneFormerSegmenter:
     def _id2label(self) -> dict[int, str]:
         return getattr(self.model.config, "id2label", {}) or {}
 
-    @torch.inference_mode()
     def segment(self, img_rgb: np.ndarray) -> SegmentationOutput:
-        from PIL import Image
+        with self._torch.inference_mode():
+            return self._segment(img_rgb)
 
-        pil = Image.fromarray(np.asarray(img_rgb))
+    def _segment(self, img_rgb: np.ndarray) -> SegmentationOutput:
+        pil = self._Image.fromarray(np.asarray(img_rgb))
         height, width = img_rgb.shape[:2]
 
         inputs = self.processor(images=pil, task_inputs=[self.task], return_tensors="pt")

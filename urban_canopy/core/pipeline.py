@@ -14,7 +14,7 @@ ratio, and pixel ratios need no scale.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
 
 import numpy as np
 
@@ -135,9 +135,9 @@ class CanopyPipeline:
         request = ImageRequest(
             lat=lat,
             lon=lon,
-            heading=int(heading) % 360,
-            pitch=int(pitch),
-            fov=int(fov),
+            heading=heading,
+            pitch=pitch,
+            fov=fov,
             size=size or client.settings.default_size,
         )
         path = client.fetch(request)
@@ -279,13 +279,15 @@ class CanopyPipeline:
 
     def analyse_images(self, paths: Sequence[str | Path]) -> list[ViewResult]:
         """Analyse a batch of local images, skipping the ones that fail to load."""
-        out: list[ViewResult] = []
+        return list(self.iter_analyse_images(paths))
+
+    def iter_analyse_images(self, paths: Sequence[str | Path]) -> Iterator[ViewResult]:
+        """Yield local-image results one at a time, skipping unreadable inputs."""
         for path in paths:
             try:
-                out.append(self.analyse_image(path))
+                yield self.analyse_image(path)
             except Exception as exc:
                 logger.warning("Skipping %s: %s", path, exc)
-        return out
 
     # ------------------------------------------------------------------ #
     # Core implementation                                                #

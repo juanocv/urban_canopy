@@ -58,8 +58,12 @@ Repository = "https://github.com/juanocv/urban_canopy"
 tree-ai = "urban_canopy.cli.main:main"
 tree-ai-diagnostics = "urban_canopy.diagnostics:main"
 
+[tool.setuptools]
+include-package-data = false
+
 [tool.setuptools.packages.find]
 include = ["urban_canopy*"]
+exclude = ["urban_canopy.tests*"]
 
 [tool.pytest.ini_options]
 testpaths = ["urban_canopy/tests"]

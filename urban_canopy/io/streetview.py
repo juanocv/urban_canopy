@@ -17,12 +17,20 @@ from typing import Optional
 
 import requests
 from joblib import Memory
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from urban_canopy.log import get_logger
 from urban_canopy.io.atomic import atomic_write_bytes
 from urban_canopy.io.image_io import ImageLoadError, read_rgb
+from urban_canopy.validation import (
+    validate_fov,
+    validate_heading,
+    validate_image_size,
+    validate_latitude,
+    validate_longitude,
+    validate_pitch,
+)
 
 logger = get_logger(__name__)
 
@@ -45,6 +53,23 @@ class Settings(BaseSettings):
     default_size: str = "640x640"
     timeout_s: int = 10
 
+    @field_validator("default_fov")
+    @classmethod
+    def _valid_default_fov(cls, value):
+        return validate_fov(value)
+
+    @field_validator("default_size")
+    @classmethod
+    def _valid_default_size(cls, value):
+        return validate_image_size(value)
+
+    @field_validator("timeout_s")
+    @classmethod
+    def _valid_timeout(cls, value):
+        if value <= 0:
+            raise ValueError("timeout_s must be positive.")
+        return value
+
 
 cfg = Settings()
 
@@ -59,6 +84,14 @@ class ImageRequest:
     pitch: int = 0
     fov: int = cfg.default_fov
     size: str = cfg.default_size
+
+    def __post_init__(self) -> None:
+        validate_latitude(self.lat)
+        validate_longitude(self.lon)
+        validate_heading(self.heading)
+        validate_pitch(self.pitch)
+        validate_fov(self.fov)
+        validate_image_size(self.size)
 
     @property
     def filename(self) -> str:

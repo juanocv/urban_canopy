@@ -20,18 +20,17 @@ import hashlib
 import sys
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import numpy as np
-import torch
-from PIL import Image
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from torchvision import transforms
 
 from urban_canopy.log import get_logger
 
 from .base import Segment, SegmentationOutput, build_group_masks
-from .taxonomy import Taxonomy, default_taxonomy
+from .taxonomy import Taxonomy, default_taxonomy, validate_taxonomy_class_space
+from urban_canopy.validation import MAX_IMAGE_DIMENSION, validate_int_range
 
 logger = get_logger(__name__)
 
@@ -127,7 +126,7 @@ class DeepLabSegmenter:
 
     def __init__(
         self,
-        dl_model: torch.nn.Module,
+        dl_model: Any,
         *,
         taxonomy: Taxonomy | None = None,
         device: str | None = None,
@@ -137,7 +136,27 @@ class DeepLabSegmenter:
         self.class_space = "cityscapes"
         self.model_name = getattr(dl_model, "_urban_canopy_model_name", None)
         self.checkpoint_sha256 = getattr(dl_model, "_urban_canopy_checkpoint_sha256", None)
-        self.taxonomy = taxonomy or default_taxonomy(self.class_space)
+        self.taxonomy = validate_taxonomy_class_space(
+            taxonomy or default_taxonomy(self.class_space),
+            self.class_space,
+            context="DeepLab Cityscapes checkpoint",
+        )
+        if len(input_size) != 2:
+            raise ValueError("input_size must be a (height, width) pair.")
+        for name, value in zip(("input height", "input width"), input_size):
+            validate_int_range(
+                value,
+                name=name,
+                minimum=1,
+                maximum=MAX_IMAGE_DIMENSION,
+            )
+
+        import torch
+        from PIL import Image
+        from torchvision import transforms
+
+        self._torch = torch
+        self._Image = Image
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.model = dl_model.to(self.device).eval()
         self.id2label = dict(CITYSCAPES_LABELS)
@@ -149,12 +168,15 @@ class DeepLabSegmenter:
             ]
         )
 
-    @torch.inference_mode()
     def segment(self, img_rgb: np.ndarray) -> SegmentationOutput:
+        with self._torch.inference_mode():
+            return self._segment(img_rgb)
+
+    def _segment(self, img_rgb: np.ndarray) -> SegmentationOutput:
         img = np.asarray(img_rgb)
         height, width = img.shape[:2]
 
-        tensor = self.transform(Image.fromarray(img)).unsqueeze(0).to(self.device)
+        tensor = self.transform(self._Image.fromarray(img)).unsqueeze(0).to(self.device)
         out = self.model(tensor)
         if isinstance(out, dict):
             logits = out.get("out", next(iter(out.values())))
@@ -166,7 +188,9 @@ class DeepLabSegmenter:
         pred = logits.softmax(1).argmax(1).squeeze(0).cpu().numpy().astype(np.int32)
         if pred.shape != (height, width):
             pred = np.array(
-                Image.fromarray(pred.astype("uint8")).resize((width, height), Image.NEAREST)
+                self._Image.fromarray(pred.astype("uint8")).resize(
+                    (width, height), self._Image.NEAREST
+                )
             ).astype(np.int32)
 
         segments: list[Segment] = []
@@ -277,9 +301,10 @@ def load_deeplab_checkpoint(
     device: str | None = None,
     allow_pickle: bool = False,
     repo_path: str | Path | None = None,
-) -> torch.nn.Module:
+) -> Any:
     """Load a DeepLabV3+ checkpoint into the architecture it belongs to."""
     import pickle
+    import torch
 
     ckpt = Path(ckpt_path).expanduser()
     if not ckpt.exists():

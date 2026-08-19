@@ -210,6 +210,19 @@ def test_no_output_requested_creates_no_directory(tmp_path, stub_backend):
     assert not outdir.exists()
 
 
+def test_cli_retains_rgb_only_for_artifact_images():
+    from urban_canopy.cli._argparse import build_parser
+    from urban_canopy.cli._builder import config_from_args
+
+    parser = build_parser()
+    plain = parser.parse_args(["analyse", "--image", "x.jpg"])
+    artifacts = parser.parse_args(["analyse", "--image", "x.jpg", "--save-artifacts"])
+    deterministic = parser.parse_args(["analyse", "--image", "x.jpg", "--deterministic"])
+    assert config_from_args(plain).keep_rgb is False
+    assert config_from_args(artifacts).keep_rgb is True
+    assert config_from_args(deterministic).deterministic is True
+
+
 def test_analyse_requires_some_input(tmp_path, capsys, stub_backend):
     with pytest.raises(SystemExit):
         cli_main.main(["--outdir", str(tmp_path)])

@@ -91,6 +91,26 @@ def test_single_view_overlays(client):
     assert response.status_code == 200
     overlays = response.json()["overlays"]
     assert set(overlays) == {"rgb_png_b64", "overlay_tree_png_b64", "mask_refined_png_b64"}
+    assert (True, False, True) in webapi.app.state.registry._pipes
+
+
+def test_single_view_without_overlays_uses_non_rgb_pipeline(client):
+    response = client.post("/analyse/single", json={"lat": -23.0, "lon": -46.0})
+    assert response.status_code == 200
+    assert (True, False, False) in webapi.app.state.registry._pipes
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"lat": 91, "lon": 0},
+        {"lat": 0},
+        {"lat": 0, "lon": 0, "size": "640*640"},
+        {"lat": 0, "lon": 0, "size": "5000x640"},
+    ],
+)
+def test_single_view_rejects_invalid_capture_configuration(client, payload):
+    assert client.post("/analyse/single", json=payload).status_code == 422
 
 
 def test_multi_view(client):

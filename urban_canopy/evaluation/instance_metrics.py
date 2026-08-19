@@ -26,6 +26,8 @@ from typing import Any, Sequence
 
 import numpy as np
 
+from urban_canopy.validation import validate_probability
+
 __all__ = [
     "InstanceMatch",
     "MatchResult",
@@ -145,6 +147,7 @@ def match_instances(
     two predictions covering the same tree yield one TP and one FP -- never two
     TPs.
     """
+    iou_threshold = validate_probability(iou_threshold, name="iou_threshold")
     order, ranked_by = _order(preds, scores)
 
     taken: set[int] = set()

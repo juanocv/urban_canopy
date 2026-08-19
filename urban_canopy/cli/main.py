@@ -84,6 +84,8 @@ def _run_analyse(args, parser) -> int:
         write_view_artifacts,
     )
 
+    if (args.lat is None) != (args.lon is None):
+        parser.error("--lat and --lon must be provided together")
     has_location = args.address or (args.lat is not None and args.lon is not None)
     if not (args.image or has_location):
         parser.error("provide an address, --lat/--lon, or --image")
@@ -96,7 +98,10 @@ def _run_analyse(args, parser) -> int:
     if args.multi_view:
         from urban_canopy.core.viewplan import plan_headings
 
-        plan = viewplan_from_args(args)
+        try:
+            plan = viewplan_from_args(args)
+        except ValueError as exc:
+            parser.error(str(exc))
         if plan.min_successful_views < 1:
             parser.error("--min-successful-views must be at least 1")
         planned_count = len(plan_headings(plan))
@@ -106,7 +111,7 @@ def _run_analyse(args, parser) -> int:
                 f"planned headings ({planned_count})"
             )
 
-    set_seed(args.seed)
+    set_seed(args.seed, deterministic=args.deterministic)
 
     # Resolve before loading any weights, so an impossible request fails in
     # milliseconds instead of after a multi-gigabyte download.
@@ -117,11 +122,42 @@ def _run_analyse(args, parser) -> int:
     pipe = build_pipeline(args, device, needs_streetview=bool(has_location))
     logger.info("Pipeline building took %.2f seconds", time.time() - started)
 
+    from urban_canopy.cli._argparse import DEFAULT_EXPORT
+
+    metrics_target = args.metrics_json
+    csv_target = args.csv
+    predictions_target = args.predictions_json
+    if args.save_artifacts:
+        metrics_target = metrics_target if metrics_target is not None else DEFAULT_EXPORT
+        csv_target = csv_target if csv_target is not None else DEFAULT_EXPORT
+        predictions_target = (
+            predictions_target if predictions_target is not None else DEFAULT_EXPORT
+        )
+    wants_output = bool(args.save_artifacts or metrics_target or csv_target or predictions_target)
+    layout = None
+
     # ---------------- run ----------------
     results = []
     multi = None
     if args.image:
-        results = pipe.analyse_images([p.resolve() for p in args.image])
+        artifact_config = None
+        for result in pipe.iter_analyse_images([p.resolve() for p in args.image]):
+            if args.save_artifacts:
+                if layout is None:
+                    layout = RunLayout.create(
+                        args.outdir,
+                        make_run_id(args.seg, name=args.run_name),
+                    )
+                    print(f"\nRun directory: {layout.root}")
+                    artifact_config = ArtifactConfig(outdir=layout.views)
+                assert artifact_config is not None
+                write_view_artifacts(result, artifact_config, index=len(results))
+                # RGB is the dominant per-view allocation. Once its artifacts
+                # exist, keeping it until the whole batch finishes serves no
+                # consumer; masks and compact metrics remain available for the
+                # run-level exports below.
+                result.rgb_image = None
+            results.append(result)
         if not results:
             print("No image could be analysed", file=sys.stderr)
             return 1
@@ -179,36 +215,21 @@ def _run_analyse(args, parser) -> int:
     )
 
     # ---------------- artifacts / exports ----------------
-    # --save-artifacts is the "give me everything" flag: it implies the three
-    # export flags too, so a run that wants the full audit bundle does not have
-    # to spell out --metrics-json --csv --predictions-json on top of it. Each
-    # export flag still works on its own (e.g. --csv alone, no images), and an
-    # explicit path on any of them overrides where it lands.
-    from urban_canopy.cli._argparse import DEFAULT_EXPORT
-
-    metrics_target = args.metrics_json
-    csv_target = args.csv
-    predictions_target = args.predictions_json
-    if args.save_artifacts:
-        metrics_target = metrics_target if metrics_target is not None else DEFAULT_EXPORT
-        csv_target = csv_target if csv_target is not None else DEFAULT_EXPORT
-        predictions_target = (
-            predictions_target if predictions_target is not None else DEFAULT_EXPORT
-        )
-
     # The run directory is created only when the run actually writes something,
     # so a plain analysis leaves no empty folders behind.
-    wants_output = bool(args.save_artifacts or metrics_target or csv_target or predictions_target)
     if not wants_output:
         return 0
 
-    layout = RunLayout.create(args.outdir, make_run_id(args.seg, name=args.run_name))
-    print(f"\nRun directory: {layout.root}")
+    if layout is None:
+        layout = RunLayout.create(args.outdir, make_run_id(args.seg, name=args.run_name))
+        print(f"\nRun directory: {layout.root}")
 
-    if args.save_artifacts:
+    if args.save_artifacts and not args.image:
         artifact_config = ArtifactConfig(outdir=layout.views)
         for index, result in enumerate(results):
             write_view_artifacts(result, artifact_config, index=index)
+            result.rgb_image = None
+    if args.save_artifacts:
         print(f"  views/      {len(results)} view folder(s)")
 
     if metrics_target is not None:

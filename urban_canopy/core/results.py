@@ -22,6 +22,14 @@ from urban_canopy.io.atomic import atomic_write_text
 from urban_canopy.processing.aggregate import MultiViewAggregate
 from urban_canopy.processing.coverage import CoverageMetrics
 from urban_canopy.processing.refinement import RefinementStats
+from urban_canopy.validation import (
+    validate_fov,
+    validate_heading,
+    validate_image_size,
+    validate_latitude,
+    validate_longitude,
+    validate_pitch,
+)
 
 __all__ = ["CaptureParams", "ViewFailure", "ViewResult", "MultiViewResult", "QualityFlag"]
 
@@ -53,6 +61,24 @@ class CaptureParams:
     pano_id: str | None = None
     capture_date: str | None = None
     image_path: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.source not in ("streetview", "local"):
+            raise ValueError(f"source must be 'streetview' or 'local'; got {self.source!r}.")
+        if self.lat is not None:
+            validate_latitude(self.lat)
+        if self.lon is not None:
+            validate_longitude(self.lon)
+        if (self.lat is None) != (self.lon is None):
+            raise ValueError("lat and lon must either both be present or both be absent.")
+        if self.heading is not None:
+            validate_heading(self.heading)
+        if self.pitch is not None:
+            validate_pitch(self.pitch)
+        if self.fov is not None:
+            validate_fov(self.fov)
+        if self.size is not None:
+            validate_image_size(self.size)
 
     def to_dict(self) -> dict[str, Any]:
         return {

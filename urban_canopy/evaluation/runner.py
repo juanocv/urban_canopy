@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from urban_canopy.log import get_logger
+from urban_canopy.validation import validate_probability
 
 from .coco import CocoDataset
 from .coverage_error import evaluate_coverage
@@ -72,6 +73,8 @@ def evaluate(
     when none do, that level is skipped with the reason recorded, never
     silently reported as zero.
     """
+    iou_threshold = validate_probability(iou_threshold, name="iou_threshold")
+
     # Evaluation is a publication boundary: warnings are insufficient when a
     # malformed dataset would change the ground truth or the join cardinality.
     dataset.validate(strict=True)

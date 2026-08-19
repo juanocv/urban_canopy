@@ -4,10 +4,64 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Any, Callable
+
+from urban_canopy.validation import (
+    MAX_MORPH_KERNEL_PX,
+    validate_fov,
+    validate_heading,
+    validate_image_size,
+    validate_int_range,
+    validate_latitude,
+    validate_longitude,
+    validate_pitch,
+    validate_probability,
+)
 
 #: Stored when an export flag is given without a path; the export then lands in
 #: the run directory instead of the working directory.
 DEFAULT_EXPORT = "<run-dir>"
+
+
+def _validated(validator: Callable[[Any], Any]) -> Callable[[str], Any]:
+    def parse(value: str) -> Any:
+        try:
+            return validator(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(str(exc)) from exc
+
+    return parse
+
+
+latitude_arg = _validated(validate_latitude)
+longitude_arg = _validated(validate_longitude)
+heading_arg = _validated(validate_heading)
+pitch_arg = _validated(validate_pitch)
+fov_arg = _validated(validate_fov)
+size_arg = _validated(validate_image_size)
+probability_arg = _validated(lambda value: validate_probability(value, name="threshold"))
+nonnegative_int_arg = _validated(
+    lambda value: validate_int_range(
+        value,
+        name="value",
+        minimum=0,
+        maximum=2**31 - 1,
+    )
+)
+kernel_arg = _validated(
+    lambda value: validate_int_range(
+        value,
+        name="kernel",
+        minimum=0,
+        maximum=MAX_MORPH_KERNEL_PX,
+    )
+)
+positive_view_count_arg = _validated(
+    lambda value: validate_int_range(value, name="view count", minimum=1, maximum=360)
+)
+seed_arg = _validated(
+    lambda value: validate_int_range(value, name="seed", minimum=0, maximum=2**32 - 1)
+)
 
 
 def _add_logging_arguments(parser: argparse.ArgumentParser) -> None:
@@ -79,7 +133,7 @@ def _add_backend_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--d2-weights", type=Path, help="Detectron2 weights .pth (instance mode)")
     parser.add_argument(
         "--d2-score-thresh",
-        type=float,
+        type=probability_arg,
         default=0.50,
         help="Detectron2 score threshold (default 0.50)",
     )
@@ -130,25 +184,25 @@ def _add_processing_arguments(parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(refine=True)
     parser.add_argument(
         "--min-component-px",
-        type=int,
+        type=nonnegative_int_arg,
         default=64,
         help="Refinement: drop connected components smaller than this (default 64)",
     )
     parser.add_argument(
         "--max-hole-px",
-        type=int,
+        type=nonnegative_int_arg,
         default=64,
         help="Refinement: fill enclosed holes strictly smaller than this (default 64)",
     )
     parser.add_argument(
         "--open-px",
-        type=int,
+        type=kernel_arg,
         default=0,
         help="Refinement: morphological opening kernel in px (0 = off, default)",
     )
     parser.add_argument(
         "--close-px",
-        type=int,
+        type=kernel_arg,
         default=0,
         help="Refinement: morphological closing kernel in px (0 = off, default)",
     )
@@ -161,7 +215,15 @@ def _add_processing_arguments(parser: argparse.ArgumentParser) -> None:
         "semantic mask into connected components and FLAGS them as a heuristic, "
         "not a tree count.",
     )
-    parser.add_argument("--seed", type=int, default=0, help="Random seed recorded in the manifest")
+    parser.add_argument(
+        "--seed", type=seed_arg, default=0, help="Random seed recorded in the manifest"
+    )
+    parser.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="Request deterministic Torch/CUDA algorithms. May reject operations "
+        "without a deterministic implementation.",
+    )
 
 
 def _add_output_arguments(parser: argparse.ArgumentParser) -> None:
@@ -234,8 +296,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Analyse an existing image (repeatable for a batch)",
     )
-    analyse.add_argument("--lat", type=float, default=None, help="Latitude (decimal degrees)")
-    analyse.add_argument("--lon", type=float, default=None, help="Longitude (decimal degrees)")
+    analyse.add_argument(
+        "--lat", type=latitude_arg, default=None, help="Latitude (decimal degrees)"
+    )
+    analyse.add_argument(
+        "--lon", type=longitude_arg, default=None, help="Longitude (decimal degrees)"
+    )
 
     view = analyse.add_mutually_exclusive_group()
     view.add_argument(
@@ -252,10 +318,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analyse.set_defaults(multi_view=False)
 
-    analyse.add_argument("--heading", type=int, default=0, help="Heading in degrees (0-359)")
-    analyse.add_argument("--pitch", type=int, default=0, help="Camera pitch (-90 to 90)")
-    analyse.add_argument("--fov", type=int, default=90, help="Field of view (10-120)")
-    analyse.add_argument("--size", default="640x640", help="Street View image size (WxH)")
+    analyse.add_argument(
+        "--heading", type=heading_arg, default=0, help="Heading in degrees (0-359)"
+    )
+    analyse.add_argument("--pitch", type=pitch_arg, default=0, help="Camera pitch (-90 to 90)")
+    analyse.add_argument("--fov", type=fov_arg, default=90, help="Field of view (10-120)")
+    analyse.add_argument(
+        "--size", type=size_arg, default="640x640", help="Street View image size (WxH)"
+    )
 
     analyse.add_argument(
         "--view-mode",
@@ -265,7 +335,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analyse.add_argument(
         "--reference-heading",
-        type=int,
+        type=heading_arg,
         default=None,
         help="Reference heading for offsets/equiangular modes. Defaults to "
         "--heading. Deterministic: no mask-driven street-center search.",
@@ -277,13 +347,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analyse.add_argument(
         "--n-views",
-        type=int,
+        type=positive_view_count_arg,
         default=4,
         help="Number of equiangular views (equiangular mode, default 4)",
     )
     analyse.add_argument(
         "--min-successful-views",
-        type=int,
+        type=positive_view_count_arg,
         default=1,
         help="Abort multi-view analysis unless at least this many headings succeed (default 1)",
     )
@@ -319,7 +389,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     evaluate.add_argument(
         "--iou-threshold",
-        type=float,
+        type=probability_arg,
         default=0.50,
         help="IoU threshold for instance matching (default 0.50)",
     )
