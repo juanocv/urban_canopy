@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Iterable, Sequence
 
 import cv2
 import numpy as np
@@ -166,4 +166,4 @@ def png_b64(arr: np.ndarray) -> str:
     ok, buf = cv2.imencode(".png", arr)
     if not ok:  # pragma: no cover - cv2 only fails on malformed input
         raise ValueError("cv2.imencode failed to encode the array as PNG.")
-    return base64.b64encode(buf).decode()
+    return base64.b64encode(buf.tobytes()).decode()

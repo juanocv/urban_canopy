@@ -85,9 +85,9 @@ class BackendSettings(BaseSettings):
         return self
 
     @classmethod
-    def from_cli_args(cls, args, *, device: str) -> "BackendSettings":
+    def from_cli_args(cls, args, *, device: str) -> BackendSettings:
         """Apply explicit CLI values over environment-backed defaults."""
-        defaults = cls()
+        defaults = cls()  # pyright: ignore[reportCallIssue] -- BaseSettings env sources
         updates: dict[str, Any] = {
             "backend": args.seg,
             "device": device,
@@ -107,7 +107,7 @@ class BackendSettings(BaseSettings):
         updates.update({key: value for key, value in optional.items() if value is not None})
         payload = defaults.model_dump()
         payload.update(updates)
-        return cls(_env_file=None, **payload)
+        return cls(**payload)  # pyright: ignore[reportCallIssue] -- dynamic Pydantic signature
 
     def checkpoint_identifier(self) -> str | None:
         if self.backend in CHECKPOINT_DEFINES_CLASS_SPACE:

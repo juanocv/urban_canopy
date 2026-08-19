@@ -186,8 +186,8 @@ def build_manifest(
     try:
         import torch
 
-        torch_version = torch.__version__
-        cuda_version = getattr(torch.version, "cuda", None)
+        torch_version = getattr(torch, "__version__", None)
+        cuda_version = getattr(getattr(torch, "version", None), "cuda", None)
     except ModuleNotFoundError:
         pass
 

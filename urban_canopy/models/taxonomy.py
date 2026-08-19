@@ -21,10 +21,10 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 __all__ = [
     "ClassGroup",
@@ -199,7 +199,7 @@ class Taxonomy:
                 return group.name
         return None
 
-    def with_overrides(self, **kwargs: Any) -> "Taxonomy":
+    def with_overrides(self, **kwargs: Any) -> Taxonomy:
         return replace(self, **kwargs)
 
     def to_dict(self) -> dict[str, Any]:
@@ -213,7 +213,7 @@ class Taxonomy:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Taxonomy":
+    def from_dict(cls, data: dict[str, Any]) -> Taxonomy:
         groups = tuple(
             ClassGroup(name=str(g["name"]), aliases=tuple(str(a) for a in g["aliases"]))
             for g in data["groups"]

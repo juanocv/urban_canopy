@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Tuple, Union
 
 __all__ = [
     "EARTH_RADIUS_M",
@@ -29,14 +28,12 @@ class Coordinate:
     lat: float
     lon: float
 
-    def __or__(self, other: "Coordinate") -> float:
+    def __or__(self, other: Coordinate) -> float:
         """``c1 | c2`` -> great-circle distance in metres."""
         return haversine(self, other)
 
 
-def haversine(
-    a: Union[Coordinate, Tuple[float, float]], b: Union[Coordinate, Tuple[float, float]]
-) -> float:
+def haversine(a: Coordinate | tuple[float, float], b: Coordinate | tuple[float, float]) -> float:
     """
     Great-circle distance in **metres** (error < 1 m up to 200 km).
 

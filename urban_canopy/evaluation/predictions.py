@@ -14,9 +14,10 @@ mask intentionally omitted during export.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Sequence, cast
+from typing import Any, Literal, cast
 
 import numpy as np
 
@@ -217,7 +218,7 @@ class PredictionRecord:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "PredictionRecord":
+    def from_dict(cls, data: dict[str, Any]) -> PredictionRecord:
         return cls(
             file_name=str(data["file_name"]),
             height=int(data["height"]),
@@ -367,5 +368,5 @@ def load_predictions(path: str | Path) -> PredictionsFile:
         records=records, manifest=dict(data.get("manifest", {})), schema=schema
     )
     # Force validation at the file boundary rather than much later during a join.
-    predictions.by_file_name
+    _ = predictions.by_file_name
     return predictions

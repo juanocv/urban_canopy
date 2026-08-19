@@ -13,16 +13,16 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import cast
 
 import requests
 from joblib import Memory
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from urban_canopy.log import get_logger
 from urban_canopy.io.atomic import atomic_write_bytes
 from urban_canopy.io.image_io import ImageLoadError, decode_rgb
+from urban_canopy.log import get_logger
 from urban_canopy.validation import (
     validate_fov,
     validate_heading,
@@ -115,8 +115,8 @@ class StreetViewClient:
 
     def __init__(
         self,
-        cache_dir: Optional[Path] = None,
-        session: Optional[requests.Session] = None,
+        cache_dir: Path | None = None,
+        session: requests.Session | None = None,
         settings: Settings = cfg,
     ):
         self.settings = settings
@@ -125,7 +125,11 @@ class StreetViewClient:
         if settings.google_api_key:
             self.session.params = {"key": settings.google_api_key}
         self.session.headers.update({"User-Agent": "urban-canopy/0.1"})
-        Path(self.cache.location).mkdir(parents=True, exist_ok=True)
+        cache_location = self.cache.location
+        if cache_location is None:  # pragma: no cover - Memory was given a path above
+            raise RuntimeError("Street View cache has no filesystem location.")
+        self._cache_dir = Path(cache_location)
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
 
     def geocode(self, address: str) -> tuple[float, float]:
         """Return (lat, lon) for a free-form address string."""
@@ -142,7 +146,7 @@ class StreetViewClient:
             lat, lon = self.geocode(req)
             req = ImageRequest(lat, lon)
 
-        local_path = Path(self.cache.location) / req.filename
+        local_path = self._cache_dir / req.filename
         if local_path.exists():
             try:
                 decode_rgb(local_path)
@@ -191,7 +195,8 @@ class StreetViewClient:
         return resp.json()
 
     def _get(self, url: str, params: dict) -> requests.Response:
-        if not self.session.params.get("key"):
+        session_params = cast(dict[str, object], self.session.params)
+        if not session_params.get("key"):
             raise RuntimeError(
                 "GOOGLE_API_KEY is required for Street View API calls. "
                 "Set it in the environment or in a local .env file."

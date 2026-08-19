@@ -51,10 +51,16 @@ jobs:
       - name: black
         run: python -m black --check urban_canopy
 
+      - name: pyright
+        run: python -m pyright
+
       - name: pytest
         # The default suite is offline and CPU-only: pyproject deselects the
         # `gpu` and `network` markers, so no weights are downloaded here.
-        run: python -m pytest
+        run: python -m pytest --cov=urban_canopy --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=80
+
+      - name: Per-module coverage floor
+        run: python scripts/check_coverage.py coverage.json --fail-under 60
 
       - name: diagnostics
         run: python -m urban_canopy.diagnostics

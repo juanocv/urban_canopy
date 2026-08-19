@@ -34,6 +34,7 @@ from typing import Literal
 import numpy as np
 
 from urban_canopy.log import get_logger
+from urban_canopy.validation import validate_probability
 
 from .base import Segment, SegmentationOutput, build_group_masks
 from .taxonomy import (
@@ -42,7 +43,6 @@ from .taxonomy import (
     infer_class_space,
     validate_taxonomy_class_space,
 )
-from urban_canopy.validation import validate_probability
 
 logger = get_logger(__name__)
 

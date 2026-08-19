@@ -353,10 +353,25 @@ connected-component heuristic are rejected if combined in one instance metric.
 
 ```bash
 python -m compileall urban_canopy -q
-python -m pytest
+python -m pytest --cov=urban_canopy --cov-report=term-missing \
+  --cov-report=json:coverage.json --cov-fail-under=80
 python -m ruff check urban_canopy
 python -m black --check urban_canopy
+python -m pyright
+python scripts/check_coverage.py coverage.json --fail-under 60
 ```
+
+The test command enforces 80% aggregate branch coverage and writes a per-module
+JSON report; the second coverage gate prevents any measured production module
+from falling below 60%. Hypothesis exercises RLE, mask/coverage, aggregation and
+geographic invariants. Ruff enables bugbear, import sorting, modernization,
+simplification and NumPy-specific rules in addition to fatal errors and undefined
+names. Pyright checks the dependency-light public scientific contracts.
+
+The normal CI tests Python 3.10 and 3.13. A weekly dependency-compatibility
+workflow separately installs the declared minimum dependency set and the latest
+compatible releases, so lower bounds and upstream updates are both executable
+claims rather than untested metadata.
 
 Or all of them at once:
 

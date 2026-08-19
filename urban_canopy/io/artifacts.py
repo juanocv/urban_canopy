@@ -32,21 +32,22 @@ identical numbers.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import cv2
 import numpy as np
 
+from urban_canopy.io.atomic import atomic_write_bytes, atomic_write_text
 from urban_canopy.io.image_io import (
     TREE_COLOR_BGR,
     VEGETATION_COLOR_BGR,
     instances_overlay_bgr,
     mask_overlay_bgr,
 )
-from urban_canopy.io.atomic import atomic_write_bytes, atomic_write_text
 from urban_canopy.io.json_io import json_dumps
 from urban_canopy.log import get_logger
 
@@ -95,7 +96,7 @@ class RunLayout:
     predictions_json: Path
 
     @classmethod
-    def create(cls, outdir: str | Path, run_id: str) -> "RunLayout":
+    def create(cls, outdir: str | Path, run_id: str) -> RunLayout:
         """
         Reserve a fresh run directory under *outdir*.
 

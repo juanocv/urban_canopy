@@ -175,7 +175,7 @@ def test_duplicate_prediction_basenames_are_rejected(tmp_path):
     predictions = _predictions(tmp_path)
     predictions.records.append(replace(predictions.records[0], file_name="other/a.jpg"))
     with pytest.raises(PredictionValidationError, match="basename 'a.jpg'"):
-        predictions.by_file_name
+        _ = predictions.by_file_name
 
 
 def test_unmatched_images_are_listed_not_dropped(tmp_path):

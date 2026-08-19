@@ -15,8 +15,9 @@ no total is available.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -69,6 +70,10 @@ def aggregate_values(
     honest.
     """
     total = len(values) if n_views is None else int(n_views)
+    if total < len(values):
+        raise ValueError(
+            f"n_views ({total}) cannot be smaller than the {len(values)} supplied value(s)."
+        )
     finite = [float(v) for v in values if v is not None and np.isfinite(float(v))]
 
     if not finite:

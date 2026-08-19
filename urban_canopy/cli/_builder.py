@@ -8,6 +8,8 @@ from urban_canopy.core.viewplan import ViewPlanConfig
 from urban_canopy.models.backend_settings import (
     BackendSettings,
     build_segmenter_from_settings,
+)
+from urban_canopy.models.backend_settings import (
     resolve_device as resolve_backend_device,
 )
 from urban_canopy.models.factory import build_segmenter

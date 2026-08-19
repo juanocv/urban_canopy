@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
 
 from urban_canopy.log import configure_logging, get_logger
@@ -350,10 +351,8 @@ def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
-            try:
+            with suppress(ValueError, OSError):  # pragma: no cover - exotic streams
                 reconfigure(errors="replace")
-            except (ValueError, OSError):  # pragma: no cover - exotic streams
-                pass
 
     configure_logging(
         debug=args.debug,

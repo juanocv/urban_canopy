@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 
 from urban_canopy.core.results import CaptureParams
-from urban_canopy.io.atomic import atomic_write_text
 from urban_canopy.io.artifacts import (
     ArtifactConfig,
     RunLayout,
@@ -19,6 +18,7 @@ from urban_canopy.io.artifacts import (
     write_json,
     write_view_artifacts,
 )
+from urban_canopy.io.atomic import atomic_write_text
 from urban_canopy.processing.coverage import TREE_SOURCE_CLASS, CoverageMetrics
 from urban_canopy.processing.refinement import RefinementStats
 

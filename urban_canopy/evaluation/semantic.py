@@ -16,8 +16,9 @@ with the count of images that contributed.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -37,7 +38,7 @@ class BinaryConfusion:
     fn: int
     tn: int
 
-    def __add__(self, other: "BinaryConfusion") -> "BinaryConfusion":
+    def __add__(self, other: BinaryConfusion) -> BinaryConfusion:
         return BinaryConfusion(
             tp=self.tp + other.tp,
             fp=self.fp + other.fp,

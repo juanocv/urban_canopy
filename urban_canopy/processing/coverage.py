@@ -21,8 +21,9 @@ continuous ratio is the output.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 
@@ -180,6 +181,8 @@ def coverage_from_mask(mask: np.ndarray, valid_mask: np.ndarray | None = None) -
     valid = (
         np.ones_like(m, dtype=bool) if valid_mask is None else np.asarray(valid_mask).astype(bool)
     )
+    if valid.shape != m.shape:
+        raise ValueError(f"valid_mask has shape {valid.shape}, expected {m.shape}.")
     denominator = int(np.count_nonzero(valid))
     if denominator == 0:
         raise ValueError("The valid-pixel mask is empty, so no coverage ratio is defined.")

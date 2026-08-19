@@ -25,10 +25,10 @@ from typing import Any
 import numpy as np
 
 from urban_canopy.log import get_logger
+from urban_canopy.validation import MAX_IMAGE_DIMENSION, validate_int_range
 
 from .base import Segment, SegmentationOutput, build_group_masks
 from .taxonomy import Taxonomy, default_taxonomy, validate_taxonomy_class_space
-from urban_canopy.validation import MAX_IMAGE_DIMENSION, validate_int_range
 
 logger = get_logger(__name__)
 
@@ -88,7 +88,7 @@ class DeepLabSegmenter:
         )
         if len(input_size) != 2:
             raise ValueError("input_size must be a (height, width) pair.")
-        for name, value in zip(("input height", "input width"), input_size):
+        for name, value in zip(("input height", "input width"), input_size, strict=True):
             validate_int_range(
                 value,
                 name=name,
@@ -249,6 +249,7 @@ def load_deeplab_checkpoint(
 ) -> Any:
     """Load a DeepLabV3+ checkpoint into the architecture it belongs to."""
     import pickle
+
     import torch
 
     ckpt = Path(ckpt_path).expanduser()

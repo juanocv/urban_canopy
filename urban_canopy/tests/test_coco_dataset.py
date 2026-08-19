@@ -262,4 +262,4 @@ def test_colliding_original_names_are_rejected(tmp_path):
     dataset = CocoDataset.load(_write(tmp_path, data))
 
     with pytest.raises(DatasetValidationError, match="street.jpg"):
-        dataset.by_file_name
+        _ = dataset.by_file_name

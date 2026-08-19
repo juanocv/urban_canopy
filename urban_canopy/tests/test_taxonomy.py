@@ -5,8 +5,8 @@ import pytest
 from urban_canopy.models.taxonomy import (
     ADE20K,
     CITYSCAPES,
-    ClassGroup,
     COCO_PANOPTIC,
+    ClassGroup,
     Taxonomy,
     default_taxonomy,
     load_taxonomy,

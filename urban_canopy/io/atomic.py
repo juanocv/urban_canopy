@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 
 __all__ = ["atomic_write_bytes", "atomic_write_text"]
@@ -26,10 +27,8 @@ def atomic_write_bytes(path: str | Path, content: bytes) -> Path:
             os.fsync(handle.fileno())
         os.replace(temp, target)
     except BaseException:
-        try:
+        with suppress(OSError):
             temp.unlink(missing_ok=True)
-        except OSError:
-            pass
         raise
     return target
 

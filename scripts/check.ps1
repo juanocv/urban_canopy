@@ -13,7 +13,9 @@ function Run-Check([string]$Name, [scriptblock]$Body) {
 Run-Check "compileall"  { python -m compileall urban_canopy -q }
 Run-Check "ruff"        { python -m ruff check urban_canopy }
 Run-Check "black"       { python -m black --check urban_canopy }
-Run-Check "pytest"      { python -m pytest }
+Run-Check "pyright"     { python -m pyright }
+Run-Check "pytest"      { python -m pytest --cov=urban_canopy --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=80 }
+Run-Check "coverage"    { python scripts/check_coverage.py coverage.json --fail-under 60 }
 Run-Check "diagnostics" { python -m urban_canopy.diagnostics }
 
 Write-Host "All checks passed"

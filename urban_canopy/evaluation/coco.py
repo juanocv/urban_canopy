@@ -28,9 +28,10 @@ still joins after a re-export.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 import cv2
 import numpy as np
@@ -136,7 +137,7 @@ class CocoDataset:
         path: str | Path,
         *,
         tree_categories: Iterable[str] = DEFAULT_TREE_CATEGORIES,
-    ) -> "CocoDataset":
+    ) -> CocoDataset:
         """Read a COCO JSON export and index it by image."""
         source = Path(path)
         data = json.loads(source.read_text(encoding="utf-8"))

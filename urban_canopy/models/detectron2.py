@@ -17,15 +17,16 @@ Detectron2 adapter, in two modes.
 
 from __future__ import annotations
 
-from typing import Literal, Sequence
+from collections.abc import Sequence
+from typing import Literal
 
 import numpy as np
 
 from urban_canopy.log import get_logger
+from urban_canopy.validation import validate_probability
 
 from .base import MODEL_INSTANCES, InstanceMask, Segment, SegmentationOutput, build_group_masks
 from .taxonomy import Taxonomy, default_taxonomy, validate_taxonomy_class_space
-from urban_canopy.validation import validate_probability
 
 logger = get_logger(__name__)
 
@@ -110,7 +111,7 @@ class Detectron2Segmenter:
         score_thresh: float = 0.50,
         taxonomy: Taxonomy | None = None,
         device: str | None = None,
-    ) -> "Detectron2Segmenter":
+    ) -> Detectron2Segmenter:
         """Build the panoptic baseline from a model-zoo config string."""
         taxonomy = validate_taxonomy_class_space(
             taxonomy or default_taxonomy("coco_panoptic"),

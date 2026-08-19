@@ -111,7 +111,7 @@ class PipelineRegistry:
 async def lifespan(app: FastAPI):
     import urban_canopy as uc
 
-    backend_settings = BackendSettings()
+    backend_settings = BackendSettings()  # pyright: ignore[reportCallIssue]
     logger.info(
         "Starting Urban Canopy API (backend=%s, max_concurrency=%s)",
         backend_settings.backend,

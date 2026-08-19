@@ -21,8 +21,9 @@ ranking metric over unranked predictions is meaningless, so the report says
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -131,7 +132,8 @@ def _order(
             f"scores length ({len(scores)}) must match instances length ({len(preds)})."
         )
     if scores is not None and all(s is not None and np.isfinite(s) for s in scores):
-        order = sorted(range(len(preds)), key=lambda i: -float(scores[i]))
+        numeric_scores = [float(s) for s in scores if s is not None]
+        order = sorted(range(len(preds)), key=lambda i: -numeric_scores[i])
         return order, "score"
     order = sorted(range(len(preds)), key=lambda i: -int(np.count_nonzero(preds[i])))
     return order, "area"
@@ -289,9 +291,10 @@ def evaluate_instances(
             scores_complete = False
         else:
             matched = {m.pred_index for m in result.matches}
+            numeric_scores = [float(s) for s in scores if s is not None]
             ap_records.append(
                 (
-                    [float(s) for s in scores],
+                    numeric_scores,
                     [index in matched for index in range(len(preds))],
                     len(gts),
                 )
@@ -318,12 +321,13 @@ def evaluate_instances(
         sweep = []
         for threshold in COCO_IOU_THRESHOLDS:
             records: list[tuple[list[float], list[bool], int]] = []
-            for name, preds, scores, gts in samples:
+            for _name, preds, scores, gts in samples:
                 result = match_instances(preds, gts, iou_threshold=threshold, scores=scores)
                 matched = {m.pred_index for m in result.matches}
+                numeric_scores = [float(s) for s in (scores or []) if s is not None]
                 records.append(
                     (
-                        [float(s) for s in (scores or [])],
+                        numeric_scores,
                         [index in matched for index in range(len(preds))],
                         len(gts),
                     )
