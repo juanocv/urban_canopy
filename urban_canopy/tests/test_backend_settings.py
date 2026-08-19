@@ -129,3 +129,69 @@ def test_provenance_hashes_a_configured_local_checkpoint(tmp_path):
     assert payload["checkpoint_sha256"] == hashlib.sha256(b"checkpoint bytes").hexdigest()
     assert payload["taxonomy"]["class_space"] == "ade20k"
     assert payload["taxonomy_source"] == "built-in"
+
+
+# ------------------------------------------------- CLI / environment merge ---
+# Regression: these four flags used to carry an argparse default, which
+# from_cli_args wrote over the environment-backed value unconditionally. The
+# UC_* settings were shipped in .env.example and documented, yet had no effect
+# on any CLI run.
+def _analyse_args(*argv):
+    from urban_canopy.cli._argparse import build_parser
+
+    return build_parser().parse_args(["analyse", "--image", "x.jpg", *argv])
+
+
+@pytest.mark.parametrize(
+    ("variable", "value", "field", "expected"),
+    [
+        ("UC_SEG_BACKEND", "deeplab", "backend", "deeplab"),
+        ("UC_SEG_TASK", "panoptic", "oneformer_task", "panoptic"),
+        ("UC_D2_SCORE_THRESH", "0.9", "d2_score_threshold", 0.9),
+        ("UC_TRUST_CHECKPOINT", "1", "trust_checkpoint", True),
+    ],
+)
+def test_environment_survives_when_the_flag_is_absent(
+    monkeypatch, variable, value, field, expected
+):
+    monkeypatch.setenv(variable, value)
+    settings = BackendSettings.from_cli_args(_analyse_args(), device="cpu")
+    assert getattr(settings, field) == expected
+
+
+@pytest.mark.parametrize(
+    ("variable", "value", "argv", "field", "expected"),
+    [
+        ("UC_SEG_BACKEND", "deeplab", ("--seg", "mask2former"), "backend", "mask2former"),
+        ("UC_SEG_TASK", "panoptic", ("--seg-task", "semantic"), "oneformer_task", "semantic"),
+        (
+            "UC_D2_SCORE_THRESH",
+            "0.9",
+            ("--d2-score-thresh", "0.25"),
+            "d2_score_threshold",
+            0.25,
+        ),
+    ],
+)
+def test_flag_still_overrides_the_environment(monkeypatch, variable, value, argv, field, expected):
+    monkeypatch.setenv(variable, value)
+    settings = BackendSettings.from_cli_args(_analyse_args(*argv), device="cpu")
+    assert getattr(settings, field) == expected
+
+
+def test_defaults_hold_with_neither_flag_nor_environment(monkeypatch):
+    for key in BACKEND_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.delenv("UC_TRUST_CHECKPOINT", raising=False)
+
+    settings = BackendSettings.from_cli_args(_analyse_args(), device="cpu")
+    assert settings.backend == "oneformer"
+    assert settings.oneformer_task == "semantic"
+    assert settings.d2_score_threshold == pytest.approx(0.50)
+    assert settings.trust_checkpoint is False
+
+
+def test_trust_checkpoint_flag_enables_pickle_without_the_variable(monkeypatch):
+    monkeypatch.delenv("UC_TRUST_CHECKPOINT", raising=False)
+    settings = BackendSettings.from_cli_args(_analyse_args("--trust-checkpoint"), device="cpu")
+    assert settings.trust_checkpoint is True

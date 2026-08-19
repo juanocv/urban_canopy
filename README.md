@@ -298,8 +298,10 @@ Knobs worth knowing:
   `--headings` controls the multi-view plan deterministically.
 - `--min-successful-views N` aborts a multi-view run that produced too little
   imagery for the study protocol.
-- DeepLab loads weights-only checkpoints by default. `--trust-checkpoint`
-  enables legacy pickle loading and must only be used for a trusted file.
+- DeepLab loads weights-only checkpoints by default. The upstream VainF
+  checkpoints need Python pickle, so they require `--trust-checkpoint` (or
+  `UC_TRUST_CHECKPOINT=1` once, in `.env`); use it only for a file you trust,
+  since pickle can execute code while loading.
 - Successful DeepLab runs record the checkpoint SHA-256 in the manifest.
 - `--deterministic` additionally requests deterministic Torch/CUDA algorithms.
   This is stricter than `--seed`, but the manifest deliberately does not claim

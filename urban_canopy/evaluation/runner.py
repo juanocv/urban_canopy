@@ -10,6 +10,7 @@ a join that quietly shrinks is the classic way an evaluation flatters itself.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,102 @@ from .semantic import evaluate_semantic
 
 logger = get_logger(__name__)
 
-__all__ = ["EvaluationReport", "evaluate"]
+__all__ = ["EvaluationReport", "NameJoin", "evaluate", "join_image_names"]
+
+
+@dataclass(frozen=True, slots=True)
+class NameJoin:
+    """How prediction names were paired with annotation names."""
+
+    #: ``(prediction name, annotation name)`` pairs, prediction order.
+    matches: tuple[tuple[str, str], ...]
+    unmatched_predictions: tuple[str, ...]
+    unmatched_annotations: tuple[str, ...]
+    #: Subset of *matches* paired only after dropping the file extension.
+    joined_across_extensions: tuple[tuple[str, str], ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "n_matched": len(self.matches),
+            "joined_across_extensions": [list(pair) for pair in self.joined_across_extensions],
+        }
+
+
+def join_image_names(
+    prediction_names: Iterable[str],
+    annotation_names: Iterable[str],
+) -> NameJoin:
+    """
+    Pair predicted images with annotated ones.
+
+    Exact basenames are matched first. Whatever is left over is then matched on
+    the name without its extension, because annotation tools re-encode: Roboflow
+    exports a JPEG frame as ``frame.png``, and a strict basename join silently
+    reports both sides as unmatched and evaluates nothing.
+
+    Exact-first matters. A dataset may legitimately hold ``frame.jpg`` and
+    ``frame.png`` as different images; matching those first means the fallback
+    only ever rescues names nothing else claimed. When the fallback is
+    ambiguous -- two leftovers on either side sharing a stem -- it refuses
+    rather than picking one, because a wrong pairing scores one image's
+    prediction against another image's ground truth and looks like a plausible
+    result. Extensions are compared case-sensitively, matching the annotation
+    files rather than any one filesystem's rules.
+    """
+    predictions = list(dict.fromkeys(prediction_names))
+    annotations = set(annotation_names)
+
+    matches: list[tuple[str, str]] = []
+    across_extensions: list[tuple[str, str]] = []
+
+    matched_annotations = {name for name in predictions if name in annotations}
+    remaining_predictions = [name for name in predictions if name not in matched_annotations]
+    remaining_annotations = sorted(annotations - matched_annotations)
+
+    def by_stem(names: Iterable[str]) -> dict[str, list[str]]:
+        grouped: dict[str, list[str]] = {}
+        for name in names:
+            grouped.setdefault(Path(name).stem, []).append(name)
+        return grouped
+
+    prediction_stems = by_stem(remaining_predictions)
+    annotation_stems = by_stem(remaining_annotations)
+
+    paired_predictions: set[str] = set()
+    paired_annotations: set[str] = set()
+    for stem in sorted(set(prediction_stems) & set(annotation_stems)):
+        candidates_pred = prediction_stems[stem]
+        candidates_gt = annotation_stems[stem]
+        if len(candidates_pred) > 1 or len(candidates_gt) > 1:
+            raise ValueError(
+                f"Cannot join {stem!r} across file extensions without guessing: "
+                f"predictions {sorted(candidates_pred)} and annotations "
+                f"{sorted(candidates_gt)} all share that name. Rename them so each "
+                "prediction has one unambiguous annotation."
+            )
+        paired_predictions.add(candidates_pred[0])
+        paired_annotations.add(candidates_gt[0])
+        across_extensions.append((candidates_pred[0], candidates_gt[0]))
+
+    extension_pairs = dict(across_extensions)
+    for name in predictions:
+        if name in matched_annotations:
+            matches.append((name, name))
+        elif name in extension_pairs:
+            matches.append((name, extension_pairs[name]))
+
+    return NameJoin(
+        matches=tuple(matches),
+        unmatched_predictions=tuple(
+            name
+            for name in predictions
+            if name not in matched_annotations and name not in paired_predictions
+        ),
+        unmatched_annotations=tuple(
+            name for name in remaining_annotations if name not in paired_annotations
+        ),
+        joined_across_extensions=tuple(across_extensions),
+    )
 
 
 @dataclass(slots=True)
@@ -83,19 +179,28 @@ def evaluate(
     pred_by_name = predictions.by_file_name
     gt_by_name = dataset.by_file_name
 
-    shared = sorted(set(pred_by_name) & set(gt_by_name))
-    only_pred = sorted(set(pred_by_name) - set(gt_by_name))
-    only_gt = sorted(set(gt_by_name) - set(pred_by_name))
+    join = join_image_names(pred_by_name, gt_by_name)
+    shared = [pred_name for pred_name, _ in join.matches]
+    only_pred = list(join.unmatched_predictions)
+    only_gt = list(join.unmatched_annotations)
     if only_pred:
         logger.warning("%d predicted images have no annotation: %s", len(only_pred), only_pred[:5])
     if only_gt:
         logger.warning("%d annotated images have no prediction: %s", len(only_gt), only_gt[:5])
-    if not shared:
+    for pred_name, gt_name in join.joined_across_extensions:
+        logger.warning(
+            "Joined %r to %r: same name, different extension. Confirm the annotation "
+            "tool re-encoded the frame rather than labelling a different image.",
+            pred_name,
+            gt_name,
+        )
+    if not join.matches:
         raise ValueError(
             "No image appears in both the predictions file and the annotations. "
-            "The join is on file basenames, with Roboflow's extra.name preferred "
-            "over the exported file_name on the annotation side; check that both "
-            "sides name files the same way."
+            "The join is on file basenames, falling back to the name without its "
+            "extension, and Roboflow's extra.name is preferred over the exported "
+            "file_name on the annotation side; check that both sides name files "
+            "the same way."
         )
 
     semantic_pairs = []
@@ -104,9 +209,9 @@ def evaluate(
     instance_excluded: dict[str, str] = {}
     semantic_skipped: dict[str, str] = {}
 
-    for name in shared:
+    for name, gt_name in join.matches:
         record = pred_by_name[name]
-        image = gt_by_name[name]
+        image = gt_by_name[gt_name]
         if (record.height, record.width) != (image.height, image.width):
             raise ValueError(
                 f"{name}: prediction declares {record.height}x{record.width}, annotation "
@@ -212,7 +317,8 @@ def evaluate(
         settings={
             "iou_threshold": iou_threshold,
             "annotations": str(dataset.path) if dataset.path else None,
-            "join_key": "file basename",
+            "join_key": "file basename, falling back to the name without extension",
+            "joined_across_extensions": [list(pair) for pair in join.joined_across_extensions],
             "coverage_denominator": "complete image",
         },
     )

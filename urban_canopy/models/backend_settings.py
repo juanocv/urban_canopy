@@ -88,14 +88,17 @@ class BackendSettings(BaseSettings):
     def from_cli_args(cls, args, *, device: str) -> BackendSettings:
         """Apply explicit CLI values over environment-backed defaults."""
         defaults = cls()  # pyright: ignore[reportCallIssue] -- BaseSettings env sources
-        updates: dict[str, Any] = {
+        # Only the device is unconditional: the CLI always resolves it. Every
+        # other flag carries an argparse default of None, so "absent" is
+        # distinguishable from "explicitly set". Writing an argparse default
+        # here instead would overwrite the environment-backed value and make the
+        # matching UC_* setting silently inert.
+        updates: dict[str, Any] = {"device": device}
+        optional = {
             "backend": args.seg,
-            "device": device,
             "oneformer_task": args.seg_task,
             "d2_score_threshold": args.d2_score_thresh,
             "trust_checkpoint": args.trust_checkpoint,
-        }
-        optional = {
             "model_name": args.seg_model,
             "taxonomy_path": args.taxonomy,
             "d2_config": args.d2_config,

@@ -90,9 +90,9 @@ def _add_logging_arguments(parser: argparse.ArgumentParser) -> None:
 def _add_backend_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--seg",
-        default="oneformer",
+        default=None,
         choices=["oneformer", "mask2former", "detectron2", "deeplab"],
-        help="Segmentation backend (default: oneformer)",
+        help="Segmentation backend. Defaults to UC_SEG_BACKEND, then oneformer.",
     )
     parser.add_argument(
         "--seg-model",
@@ -111,7 +111,7 @@ def _add_backend_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--seg-task",
-        default="semantic",
+        default=None,
         choices=["semantic", "panoptic"],
         help="OneFormer task. Semantic (default) avoids panoptic post-processing "
         "thresholds influencing the coverage ratio.",
@@ -135,8 +135,8 @@ def _add_backend_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--d2-score-thresh",
         type=probability_arg,
-        default=0.50,
-        help="Detectron2 score threshold (default 0.50)",
+        default=None,
+        help="Detectron2 score threshold. Defaults to UC_D2_SCORE_THRESH, then 0.50.",
     )
     # DeepLab. All three have standing defaults (UC_DEEPLAB_CKPT / _REPO / _MODEL,
     # settable in .env), so on a configured machine none of them need repeating.
@@ -164,6 +164,7 @@ def _add_backend_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--trust-checkpoint",
         action="store_true",
+        default=None,
         help="Allow legacy DeepLab checkpoints that require Python pickle. Only use "
         "this for a checkpoint from a trusted source.",
     )

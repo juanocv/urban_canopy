@@ -119,13 +119,37 @@ fit the chosen backbone, so a mobilenet checkpoint cannot be silently loaded
 into a resnet101.
 
 Checkpoint loading is explicitly `weights_only=True`, independent of the
-installed Torch version. A legacy checkpoint that requires Python pickle is
-rejected because pickle can execute code while loading. Only for a file from a
-trusted source, opt in explicitly:
+installed Torch version. A checkpoint that requires Python pickle is rejected,
+because pickle can execute arbitrary code while loading.
+
+**The upstream checkpoints linked above are exactly that kind of file**, so the
+documented DeepLab path needs the opt-in on every run:
+
+```
+ValueError: This checkpoint requires Python pickle, which can execute code while
+loading. Use a weights-only checkpoint, or pass --trust-checkpoint ...
+```
+
+They are published by the repository this backend is built around, so trusting
+them is a reasonable decision — but it should be a decision, taken once and
+recorded, rather than a silent default:
 
 ```bash
-tree-ai --image street.jpg --seg deeplab --ckpt legacy.pth --trust-checkpoint
+tree-ai --image street.jpg --seg deeplab --ckpt best_deeplabv3plus_mobilenet_cityscapes_os16.pth \
+        --trust-checkpoint
 ```
+
+Set it once for the machine instead of repeating the flag, alongside the other
+DeepLab defaults below:
+
+```ini
+# .env
+UC_TRUST_CHECKPOINT=1
+```
+
+Either way the run logs a warning naming the file it trusted. Verify the file
+first if it did not come from the upstream release — the SHA-256 recorded in the
+manifest is what makes that verifiable afterwards.
 
 The equivalent library option is `allow_pickle=True`; its default is `False`.
 For successful DeepLab runs, the manifest also records the checkpoint's SHA-256

@@ -24,6 +24,20 @@ error rather than a silent overwrite, and `tree-ai validate-dataset` reports it
 before an evaluation is ever run. Images present on only one side are listed in
 the report, never silently dropped.
 
+**Extensions.** Annotation tools re-encode: a JPEG frame labelled in Roboflow
+comes back as `frame.png`. Names left unmatched after the exact pass are
+therefore matched again ignoring the extension, and every such pairing is logged
+and listed in the report under `settings.joined_across_extensions` — joining two
+differently-named files is a judgement the report has to show, not hide.
+
+Exact matches are made first, so a set genuinely containing both `frame.jpg` and
+`frame.png` pairs each with its own annotation and the fallback never sees them.
+When the fallback would be ambiguous — two leftovers on either side sharing a
+name — evaluation stops rather than choosing, because pairing the wrong one
+scores an image against another image's ground truth and still prints a
+plausible number. Comparison is case-sensitive, since `Frame.jpg` and
+`frame.jpg` are different files on Linux.
+
 Three independent levels are computed. They answer different questions and are
 never merged into one score.
 

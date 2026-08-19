@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -14,7 +15,7 @@ from urban_canopy.evaluation.predictions import (
     write_predictions,
 )
 from urban_canopy.evaluation.rle import encode_rle
-from urban_canopy.evaluation.runner import evaluate
+from urban_canopy.evaluation.runner import evaluate, join_image_names
 
 HEIGHT, WIDTH = 30, 40
 
@@ -241,3 +242,82 @@ def test_evaluation_refuses_dataset_without_a_tree_category(tmp_path):
 def test_manifest_travels_into_the_report(tmp_path):
     report = evaluate(_predictions(tmp_path), _coco(tmp_path))
     assert report.manifest == {"note": "test"}
+
+
+# --------------------------------------------------------------- name join ---
+def test_exact_basenames_join_unchanged():
+    join = join_image_names(["a.jpg", "b.jpg"], ["b.jpg", "a.jpg"])
+    assert join.matches == (("a.jpg", "a.jpg"), ("b.jpg", "b.jpg"))
+    assert join.joined_across_extensions == ()
+    assert join.unmatched_predictions == ()
+    assert join.unmatched_annotations == ()
+
+
+def test_extension_mismatch_still_joins():
+    # Roboflow re-encodes a JPEG frame and exports it as PNG. A strict basename
+    # join reported both sides unmatched and evaluated nothing.
+    join = join_image_names(["street.jpg"], ["street.png"])
+    assert join.matches == (("street.jpg", "street.png"),)
+    assert join.joined_across_extensions == (("street.jpg", "street.png"),)
+    assert join.unmatched_predictions == ()
+    assert join.unmatched_annotations == ()
+
+
+def test_exact_match_wins_over_the_extension_fallback():
+    # frame.jpg and frame.png may be genuinely different images; the exact pair
+    # must claim each other before the fallback sees them.
+    join = join_image_names(["frame.jpg", "frame.png"], ["frame.png", "frame.jpg"])
+    assert dict(join.matches) == {"frame.jpg": "frame.jpg", "frame.png": "frame.png"}
+    assert join.joined_across_extensions == ()
+
+
+def test_leftover_after_exact_match_still_uses_the_fallback():
+    join = join_image_names(["frame.jpg", "other.jpg"], ["frame.jpg", "other.tif"])
+    assert dict(join.matches) == {"frame.jpg": "frame.jpg", "other.jpg": "other.tif"}
+    assert join.joined_across_extensions == (("other.jpg", "other.tif"),)
+
+
+def test_ambiguous_stem_is_refused_rather_than_guessed():
+    # Pairing the wrong one scores an image against another image's ground
+    # truth and still produces a plausible-looking number.
+    with pytest.raises(ValueError, match="without guessing"):
+        join_image_names(["frame.jpg", "frame.bmp"], ["frame.png"])
+    with pytest.raises(ValueError, match="without guessing"):
+        join_image_names(["frame.jpg"], ["frame.png", "frame.tif"])
+
+
+def test_unmatched_names_are_reported_on_both_sides():
+    join = join_image_names(["a.jpg", "only_pred.jpg"], ["a.jpg", "only_gt.jpg"])
+    assert join.unmatched_predictions == ("only_pred.jpg",)
+    assert join.unmatched_annotations == ("only_gt.jpg",)
+
+
+def test_extensions_are_compared_case_sensitively():
+    # Not casefolded: on Linux "Frame.jpg" and "frame.jpg" are different files,
+    # and inventing a case-insensitive match would collide them.
+    join = join_image_names(["Frame.jpg"], ["frame.png"])
+    assert join.matches == ()
+    assert join.unmatched_predictions == ("Frame.jpg",)
+
+
+def test_evaluation_joins_across_extensions_end_to_end(tmp_path):
+    dataset = _coco(tmp_path)
+    # Re-encode the annotation side, exactly as an annotation tool would.
+    dataset.images = {
+        i: type(img)(
+            id=img.id,
+            file_name=f"{Path(img.file_name).stem}.png",
+            width=img.width,
+            height=img.height,
+        )
+        for i, img in dataset.images.items()
+    }
+
+    report = evaluate(_predictions(tmp_path), dataset)
+
+    assert report.n_matched_images == 2
+    assert report.semantic["micro"]["iou"] == pytest.approx(1.0)
+    assert report.unmatched_predictions == []
+    assert report.unmatched_annotations == []
+    # The pairing is surfaced, never silent.
+    assert ["a.jpg", "a.png"] in report.settings["joined_across_extensions"]

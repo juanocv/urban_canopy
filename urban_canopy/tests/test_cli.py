@@ -83,7 +83,9 @@ def test_analyse_writes_all_exports(tmp_path, stub_backend):
     assert code == 0
 
     payload = json.loads(metrics.read_text(encoding="utf-8"))
-    assert payload["manifest"]["model"]["backend"] == "oneformer"
+    # The backend that actually ran, not the one requested: these tests stub
+    # the segmenter, and the manifest has to name what produced the numbers.
+    assert payload["manifest"]["model"]["backend"] == StubSegmenter.backend_name
     assert payload["views"][0]["coverage"]["tree_coverage_pct"] == pytest.approx(25.0)
 
     header = csv_path.read_text(encoding="utf-8").splitlines()[0]
@@ -114,8 +116,8 @@ def test_run_directory_is_named_after_timestamp_and_backend(tmp_path, stub_backe
         ["--image", str(_image(tmp_path)), "--outdir", str(tmp_path / "o"), "--save-artifacts"]
     )
     run_dir = _only_run_dir(tmp_path / "o")
-    assert run_dir.name.endswith("_oneformer")
-    # 20260818-104512_oneformer
+    assert run_dir.name.endswith(f"_{StubSegmenter.backend_name}")
+    # e.g. 20260818-104512_stub
     assert len(run_dir.name.split("_")[0]) == len("20260818-104512")
 
 

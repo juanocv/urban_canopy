@@ -147,7 +147,7 @@ def _run_analyse(args, parser) -> int:
                 if layout is None:
                     layout = RunLayout.create(
                         args.outdir,
-                        make_run_id(args.seg, name=args.run_name),
+                        make_run_id(pipe.segmenter.backend_name, name=args.run_name),
                     )
                     print(f"\nRun directory: {layout.root}")
                     artifact_config = ArtifactConfig(outdir=layout.views)
@@ -207,7 +207,7 @@ def _run_analyse(args, parser) -> int:
 
     manifest = build_manifest(
         config=pipe.config,
-        backend=args.seg,
+        backend=pipe.segmenter.backend_name,
         class_space=pipe.segmenter.class_space,
         taxonomy=pipe.segmenter.taxonomy,
         model_name=getattr(pipe.segmenter, "model_name", None),
@@ -222,7 +222,9 @@ def _run_analyse(args, parser) -> int:
         return 0
 
     if layout is None:
-        layout = RunLayout.create(args.outdir, make_run_id(args.seg, name=args.run_name))
+        layout = RunLayout.create(
+            args.outdir, make_run_id(pipe.segmenter.backend_name, name=args.run_name)
+        )
         print(f"\nRun directory: {layout.root}")
 
     if args.save_artifacts and not args.image:
