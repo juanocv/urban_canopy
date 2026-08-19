@@ -49,9 +49,10 @@ Reported per image and pooled:
 Conventions: pooled ("micro") metrics add the confusion counts over the whole
 set first — they are the headline numbers. Macro averages are also reported
 with the count of images that contributed. An image where neither prediction
-nor ground truth has any tree pixel has *undefined* per-image IoU (reported as
-NaN, counted in `n_images_without_trees_in_both`), rather than a flattering
-1.0 or a punishing 0.0.
+nor ground truth has any tree pixel has *undefined* per-image IoU (represented
+as `NaN` while computing and exported as JSON `null`, counted in
+`n_images_without_trees_in_both`), rather than a flattering 1.0 or a punishing
+0.0. All JSON exports are strict: neither `NaN` nor `Infinity` is emitted.
 
 ## Level 2 — Individual trees (instances)
 

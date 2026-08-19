@@ -162,6 +162,7 @@ class MultiViewRequest(BaseModel):
     mode: str = Field("offsets", pattern="^(offsets|equiangular)$")
     offsets: list[int] = Field(default_factory=lambda: [0, 90, 180, 270])
     n_views: int = Field(4, ge=1, le=16)
+    min_successful_views: int = Field(1, ge=1, le=16)
     pitch: int = Field(0, ge=-90, le=90)
     fov: int = Field(90, ge=10, le=120)
     size: str = Field("640x640", pattern=r"^\d{2,4}x\d{2,4}$")
@@ -232,7 +233,7 @@ def analyse_single(req: SingleViewRequest) -> dict[str, Any]:
 
 @app.post("/analyse/multi")
 def analyse_multi(req: MultiViewRequest) -> dict[str, Any]:
-    from urban_canopy.core.viewplan import ViewPlanConfig
+    from urban_canopy.core.viewplan import ViewPlanConfig, plan_headings
 
     lat, lon = _resolve_location(req)
     plan = ViewPlanConfig(
@@ -243,7 +244,15 @@ def analyse_multi(req: MultiViewRequest) -> dict[str, Any]:
         pitch=req.pitch,
         fov=req.fov,
         size=req.size,
+        min_successful_views=req.min_successful_views,
     )
+    planned_count = len(plan_headings(plan))
+    if plan.min_successful_views > planned_count:
+        raise HTTPException(
+            422,
+            "min_successful_views cannot exceed the number of distinct "
+            f"planned headings ({planned_count})",
+        )
     pipe = app.state.registry.get(
         refine=req.refine, allow_vegetation_proxy=req.allow_vegetation_proxy
     )
@@ -251,6 +260,10 @@ def analyse_multi(req: MultiViewRequest) -> dict[str, Any]:
         try:
             result = pipe.analyse_multiview(lat, lon, plan=plan, address=req.address)
         except Exception as exc:
+            from urban_canopy.core.pipeline import MultiViewAnalysisError
+
+            if isinstance(exc, MultiViewAnalysisError):
+                raise HTTPException(502, detail=exc.to_dict()) from exc
             logger.exception("Multi-view analysis failed")
             raise HTTPException(500, f"Analysis failed: {exc}") from exc
 

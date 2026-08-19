@@ -10,7 +10,6 @@ is hashable so a view plan can be de-duplicated before spending quota.
 
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +21,8 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from urban_canopy.log import get_logger
+from urban_canopy.io.atomic import atomic_write_bytes
+from urban_canopy.io.image_io import ImageLoadError, read_rgb
 
 logger = get_logger(__name__)
 
@@ -91,7 +92,7 @@ class StreetViewClient:
         if settings.google_api_key:
             self.session.params = {"key": settings.google_api_key}
         self.session.headers.update({"User-Agent": "urban-canopy/0.1"})
-        os.makedirs(self.cache.location, exist_ok=True)
+        Path(self.cache.location).mkdir(parents=True, exist_ok=True)
 
     def geocode(self, address: str) -> tuple[float, float]:
         """Return (lat, lon) for a free-form address string."""
@@ -110,8 +111,13 @@ class StreetViewClient:
 
         local_path = Path(self.cache.location) / req.filename
         if local_path.exists():
-            logger.debug("Street View cache hit: %s", local_path)
-            return local_path
+            try:
+                read_rgb(local_path)
+            except ImageLoadError as exc:
+                logger.warning("Ignoring corrupt Street View cache entry %s: %s", local_path, exc)
+            else:
+                logger.debug("Street View cache hit: %s", local_path)
+                return local_path
 
         params = {
             "location": f"{req.lat},{req.lon}",
@@ -122,12 +128,23 @@ class StreetViewClient:
         }
         # Google occasionally answers HTTP 200 with an error placeholder image,
         # which is far smaller than any real frame.
-        content = self._get(self._BASE, params=params).content
+        response = self._get(self._BASE, params=params)
+        content_type = response.headers.get("Content-Type", "")
+        if content_type and not content_type.lower().startswith("image/"):
+            raise RuntimeError(
+                f"Street View returned Content-Type {content_type!r} instead of an image."
+            )
+        content = response.content
         if len(content) < 1024:
             raise RuntimeError("Street View returned an empty image.")
+        try:
+            read_rgb(content)
+        except ImageLoadError as exc:
+            raise RuntimeError(
+                "Street View returned bytes that are not a decodable image."
+            ) from exc
 
-        local_path.write_bytes(content)
-        return local_path
+        return atomic_write_bytes(local_path, content)
 
     def metadata(self, lat: float, lon: float) -> dict:
         """

@@ -33,12 +33,42 @@ from urban_canopy.processing.instances import instances_from_components
 from urban_canopy.processing.refinement import refine_canopy_mask
 
 from .config import CanopyConfig
-from .results import CaptureParams, MultiViewResult, QualityFlag, ViewResult
+from .results import CaptureParams, MultiViewResult, QualityFlag, ViewFailure, ViewResult
 from .viewplan import ViewPlanConfig, plan_headings
 
 logger = get_logger(__name__)
 
-__all__ = ["CanopyPipeline"]
+__all__ = ["CanopyPipeline", "MultiViewAnalysisError"]
+
+
+class MultiViewAnalysisError(RuntimeError):
+    """Raised when a view plan produces fewer usable views than required."""
+
+    def __init__(
+        self,
+        *,
+        min_successful_views: int,
+        planned_headings: Sequence[int],
+        successful_headings: Sequence[int],
+        failures: Sequence[ViewFailure],
+    ) -> None:
+        self.min_successful_views = int(min_successful_views)
+        self.planned_headings = tuple(int(h) for h in planned_headings)
+        self.successful_headings = tuple(int(h) for h in successful_headings)
+        self.failures = tuple(failures)
+        super().__init__(
+            f"Multi-view analysis produced {len(self.successful_headings)} usable view(s), "
+            f"but at least {self.min_successful_views} were required."
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "message": str(self),
+            "min_successful_views": self.min_successful_views,
+            "planned_headings": list(self.planned_headings),
+            "successful_headings": list(self.successful_headings),
+            "failures": [failure.to_dict() for failure in self.failures],
+        }
 
 
 class CanopyPipeline:
@@ -149,12 +179,20 @@ class CanopyPipeline:
         client = self._require_streetview()
         config = plan or ViewPlanConfig()
         headings = plan_headings(config)
+        if config.min_successful_views < 1:
+            raise ValueError("min_successful_views must be at least 1.")
+        if config.min_successful_views > len(headings):
+            raise ValueError(
+                f"min_successful_views={config.min_successful_views} exceeds the "
+                f"{len(headings)} distinct planned heading(s)."
+            )
 
         pano_meta: dict[str, Any] = {}
         if record_metadata:
             pano_meta = self._panorama_metadata(client, lat, lon)
 
         views: list[ViewResult] = []
+        failures: list[ViewFailure] = []
         for heading in headings:
             request = ImageRequest(
                 lat=lat,
@@ -168,6 +206,14 @@ class CanopyPipeline:
                 path = client.fetch(request)
             except Exception as exc:
                 logger.warning("Heading %s: Street View fetch failed: %s", heading, exc)
+                failures.append(
+                    ViewFailure(
+                        heading=heading,
+                        stage="fetch",
+                        error_type=type(exc).__name__,
+                        message=str(exc),
+                    )
+                )
                 continue
 
             capture = CaptureParams(
@@ -187,6 +233,24 @@ class CanopyPipeline:
                 views.append(self.analyse_image(path, capture=capture))
             except Exception as exc:
                 logger.warning("Heading %s: analysis failed: %s", heading, exc)
+                failures.append(
+                    ViewFailure(
+                        heading=heading,
+                        stage="analysis",
+                        error_type=type(exc).__name__,
+                        message=str(exc),
+                    )
+                )
+
+        if len(views) < config.min_successful_views:
+            raise MultiViewAnalysisError(
+                min_successful_views=config.min_successful_views,
+                planned_headings=headings,
+                successful_headings=[
+                    int(view.capture.heading) for view in views if view.capture.heading is not None
+                ],
+                failures=failures,
+            )
 
         # n_views reflects the plan, not the survivors: two usable frames out of
         # eight planned is a different result from two out of two.
@@ -199,6 +263,7 @@ class CanopyPipeline:
             lon=lon,
             address=address,
             plan={**config.to_dict(), "planned_headings": headings},
+            failures=failures,
         )
 
     def analyse_address_multiview(

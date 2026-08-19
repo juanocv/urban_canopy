@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from urban_canopy.core.config import CanopyConfig
-from urban_canopy.core.pipeline import CanopyPipeline
+from urban_canopy.core.pipeline import CanopyPipeline, MultiViewAnalysisError
 from urban_canopy.core.results import QualityFlag
 from urban_canopy.core.viewplan import ViewPlanConfig
 from urban_canopy.io.streetview import Settings, StreetViewClient
@@ -214,6 +214,55 @@ def test_multiview_counts_failed_headings(tmp_path, monkeypatch):
     assert len(result.views) == 2
     assert result.aggregate.tree_coverage.n_views == 3
     assert result.aggregate.tree_coverage.n_valid_views == 2
+    assert [failure.to_dict() for failure in result.failures] == [
+        {
+            "heading": 90,
+            "stage": "fetch",
+            "error_type": "RuntimeError",
+            "message": "no imagery here",
+        }
+    ]
+
+
+def test_multiview_raises_when_every_heading_fails(tmp_path, monkeypatch):
+    client = _stubbed_streetview(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        StreetViewClient,
+        "fetch",
+        lambda self, req: (_ for _ in ()).throw(RuntimeError("quota unavailable")),
+    )
+    pipe = CanopyPipeline(segmenter=StubSegmenter(), streetview=client)
+
+    with pytest.raises(MultiViewAnalysisError) as excinfo:
+        pipe.analyse_multiview(
+            -23.0,
+            -46.0,
+            plan=ViewPlanConfig(mode="offsets", offsets=(0, 90)),
+        )
+
+    error = excinfo.value
+    assert error.successful_headings == ()
+    assert [failure.heading for failure in error.failures] == [0, 90]
+    assert {failure.stage for failure in error.failures} == {"fetch"}
+
+
+def test_multiview_enforces_configured_minimum(tmp_path, monkeypatch):
+    client = _stubbed_streetview(tmp_path, monkeypatch)
+
+    def one_success(self, req):
+        if req.heading != 0:
+            raise RuntimeError("missing")
+        return _image(tmp_path, "sv.jpg")
+
+    monkeypatch.setattr(StreetViewClient, "fetch", one_success)
+    pipe = CanopyPipeline(segmenter=StubSegmenter(), streetview=client)
+    plan = ViewPlanConfig(
+        mode="offsets",
+        offsets=(0, 90, 180),
+        min_successful_views=2,
+    )
+    with pytest.raises(MultiViewAnalysisError, match="at least 2"):
+        pipe.analyse_multiview(-23.0, -46.0, plan=plan)
 
 
 def test_coords_analysis_needs_a_client(tmp_path):

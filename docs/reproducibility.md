@@ -118,6 +118,20 @@ infers the architecture from the filename and refuses a checkpoint that does not
 fit the chosen backbone, so a mobilenet checkpoint cannot be silently loaded
 into a resnet101.
 
+Checkpoint loading is explicitly `weights_only=True`, independent of the
+installed Torch version. A legacy checkpoint that requires Python pickle is
+rejected because pickle can execute code while loading. Only for a file from a
+trusted source, opt in explicitly:
+
+```bash
+tree-ai --image street.jpg --seg deeplab --ckpt legacy.pth --trust-checkpoint
+```
+
+The equivalent library option is `allow_pickle=True`; its default is `False`.
+For successful DeepLab runs, the manifest also records the checkpoint's SHA-256
+digest without exposing its machine-specific local path, so the exact weights
+can be verified independently of the filename.
+
 ### Standing defaults
 
 The checkpoint and the checkout sit at the same path for weeks while every other
@@ -182,6 +196,9 @@ TREE COVERAGE 34.49%  (source=vegetation_proxy)   # with the proxy enabled
   id + capture date are recorded per view: Google re-shoots streets, so two
   runs months apart can legitimately differ — the pano id is what tells you
   whether they should have.
+- Cache entries are decoded before reuse. Downloads are decoded before an
+  atomic replace, so a corrupt or interrupted write is never published as a
+  valid cached frame.
 - Google may serve different imagery for the same coordinates over time. For a
   frozen study, archive the fetched frames (the cache directory) alongside the
   predictions file.

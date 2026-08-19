@@ -16,7 +16,9 @@ MobileNet checkpoint, against tens of seconds for OneFormer).
 
 from __future__ import annotations
 
+import hashlib
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +34,14 @@ from .base import Segment, SegmentationOutput, build_group_masks
 from .taxonomy import Taxonomy, default_taxonomy
 
 logger = get_logger(__name__)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class Settings(BaseSettings):
@@ -125,6 +135,8 @@ class DeepLabSegmenter:
     ) -> None:
         self.backend_name = "deeplab"
         self.class_space = "cityscapes"
+        self.model_name = getattr(dl_model, "_urban_canopy_model_name", None)
+        self.checkpoint_sha256 = getattr(dl_model, "_urban_canopy_checkpoint_sha256", None)
         self.taxonomy = taxonomy or default_taxonomy(self.class_space)
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.model = dl_model.to(self.device).eval()
@@ -263,7 +275,7 @@ def load_deeplab_checkpoint(
     num_classes: int = 19,
     output_stride: int = 16,
     device: str | None = None,
-    allow_pickle: bool = True,
+    allow_pickle: bool = False,
     repo_path: str | Path | None = None,
 ) -> torch.nn.Module:
     """Load a DeepLabV3+ checkpoint into the architecture it belongs to."""
@@ -280,19 +292,36 @@ def load_deeplab_checkpoint(
     model = modeling.__dict__[model_name](num_classes=num_classes, output_stride=output_stride)
 
     try:
-        raw = torch.load(ckpt, map_location="cpu")
+        # Explicit on every supported Torch version: relying on Torch's changing
+        # default would make allow_pickle=False unsafe on older installations.
+        raw = torch.load(ckpt, map_location="cpu", weights_only=True)
     except pickle.UnpicklingError as exc:
         if not allow_pickle:
             raise ValueError(
-                "Failed to load checkpoint with pickle disabled. "
-                "Set allow_pickle=True to enable it."
+                "This checkpoint requires Python pickle, which can execute code while "
+                "loading. Use a weights-only checkpoint, or pass --trust-checkpoint "
+                "(allow_pickle=True in Python) only if you trust its source."
             ) from exc
+        logger.warning("Loading trusted legacy checkpoint %s with pickle enabled", ckpt)
         raw = torch.load(ckpt, map_location="cpu", weights_only=False)
 
-    state = raw.get("model_state") or raw.get("state_dict") or raw
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"Checkpoint {ckpt.name!r} did not contain a mapping of tensor weights.")
+    if "model_state" in raw:
+        state = raw["model_state"]
+    elif "state_dict" in raw:
+        state = raw["state_dict"]
+    else:
+        state = raw
+    if not isinstance(state, Mapping):
+        raise ValueError(
+            f"Checkpoint {ckpt.name!r} has a state entry that is not a tensor mapping."
+        )
     model_keys = model.state_dict()
     filtered = {
-        k: v for k, v in state.items() if (k in model_keys) and (v.shape == model_keys[k].shape)
+        k: v
+        for k, v in state.items()
+        if (k in model_keys) and hasattr(v, "shape") and (v.shape == model_keys[k].shape)
     }
 
     # A mismatched backbone still matches a handful of tensors -- a mobilenet
@@ -311,5 +340,10 @@ def load_deeplab_checkpoint(
         )
 
     model.load_state_dict(filtered, strict=False)
+    # Keep immutable provenance with the loaded object. The adapter copies these
+    # values into the run manifest; the path itself is deliberately omitted
+    # because it is machine-specific and may reveal local directory names.
+    model._urban_canopy_model_name = model_name
+    model._urban_canopy_checkpoint_sha256 = _sha256_file(ckpt)
     target = device or ("cuda" if torch.cuda.is_available() else "cpu")
     return model.to(target).eval()

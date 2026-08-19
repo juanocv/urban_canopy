@@ -38,10 +38,11 @@ ground-truth export (see `docs/evaluation.md`).
 | `core/pipeline.py` | Orchestration; dependency-injected segmenter + Street View client |
 | `core/viewplan.py` | Deterministic heading plans (fixed / offsets / equiangular) |
 | `core/config.py` | `CanopyConfig`, seeds, run manifest |
-| `core/results.py` | `ViewResult`, `MultiViewResult`, quality flags, CSV rows |
+| `core/results.py` | View results, structured heading failures, CSV rows |
 | `io/streetview.py` | GSV client, cache, geocoding, `ImageRequest`, pano metadata |
 | `io/image_io.py` | Decoding to RGB and overlays |
-| `io/artifacts.py` | Per-view audit artifacts |
+| `io/artifacts.py` | Per-view audit artifacts with checked atomic writes |
+| `io/atomic.py`, `io/json_io.py` | Atomic file replacement and strict JSON conversion |
 | `io/geo.py` | Pure geographic helpers |
 | `models/taxonomy.py` | Class-space → group mapping; tree vs vegetation kept apart |
 | `models/base.py` | `SegmentationOutput` contract, instance provenance constants |
@@ -122,3 +123,10 @@ being measured. Heading plans here are deterministic and blind to the imagery.
   semantic metrics.
 - **Predictions interchange**: uncompressed COCO RLE, readable with or without
   pycocotools, manifest embedded.
+- **Multi-view minimum**: a plan requires `min_successful_views >= 1`. Each
+  failed heading records stage, exception type and message; falling below the
+  minimum raises `MultiViewAnalysisError` rather than returning an empty run.
+- **Strict JSON**: undefined numeric metrics remain undefined in memory and are
+  exported as JSON `null`; `NaN` and `Infinity` are never written.
+- **Atomic outputs**: cache frames, JSON, CSV and image artifacts are written to
+  a sibling temporary file and atomically replace the target only after success.

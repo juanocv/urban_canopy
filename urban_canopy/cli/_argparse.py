@@ -106,6 +106,12 @@ def _add_backend_arguments(parser: argparse.ArgumentParser) -> None:
         "Defaults to UC_DEEPLAB_MODEL, then to the architecture named in the "
         "checkpoint filename.",
     )
+    parser.add_argument(
+        "--trust-checkpoint",
+        action="store_true",
+        help="Allow legacy DeepLab checkpoints that require Python pickle. Only use "
+        "this for a checkpoint from a trusted source.",
+    )
 
 
 def _add_processing_arguments(parser: argparse.ArgumentParser) -> None:
@@ -274,6 +280,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=4,
         help="Number of equiangular views (equiangular mode, default 4)",
+    )
+    analyse.add_argument(
+        "--min-successful-views",
+        type=int,
+        default=1,
+        help="Abort multi-view analysis unless at least this many headings succeed (default 1)",
     )
     analyse.add_argument(
         "--headings",

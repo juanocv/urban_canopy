@@ -18,11 +18,12 @@ from typing import Any, Sequence
 
 import numpy as np
 
+from urban_canopy.io.atomic import atomic_write_text
 from urban_canopy.processing.aggregate import MultiViewAggregate
 from urban_canopy.processing.coverage import CoverageMetrics
 from urban_canopy.processing.refinement import RefinementStats
 
-__all__ = ["CaptureParams", "ViewResult", "MultiViewResult", "QualityFlag"]
+__all__ = ["CaptureParams", "ViewFailure", "ViewResult", "MultiViewResult", "QualityFlag"]
 
 
 class QualityFlag:
@@ -66,6 +67,24 @@ class CaptureParams:
             "pano_id": self.pano_id,
             "capture_date": self.capture_date,
             "image_path": self.image_path,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ViewFailure:
+    """One planned heading that failed before producing a usable result."""
+
+    heading: int
+    stage: str  # "fetch" | "analysis"
+    error_type: str
+    message: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "heading": self.heading,
+            "stage": self.stage,
+            "error_type": self.error_type,
+            "message": self.message,
         }
 
 
@@ -124,6 +143,7 @@ class MultiViewResult:
     lon: float | None = None
     address: str | None = None
     plan: dict[str, Any] = field(default_factory=dict)
+    failures: list[ViewFailure] = field(default_factory=list)
 
     def to_dict(self, *, include_artifacts: bool = True) -> dict[str, Any]:
         return {
@@ -131,6 +151,7 @@ class MultiViewResult:
             "plan": dict(self.plan),
             "aggregate": self.aggregate.to_dict(),
             "views": [v.to_dict(include_artifacts=include_artifacts) for v in self.views],
+            "failures": [failure.to_dict() for failure in self.failures],
         }
 
 
@@ -175,14 +196,14 @@ def write_rows_csv(rows: Sequence[dict[str, Any]], path: str | Path) -> Path:
     import csv
 
     target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
-        target.write_text("", encoding="utf-8")
-        return target
+        return atomic_write_text(target, "")
 
     fieldnames = list(rows[0].keys())
-    with target.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-    return target
+    import io
+
+    handle = io.StringIO(newline="")
+    writer = csv.DictWriter(handle, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(rows)
+    return atomic_write_text(target, handle.getvalue())

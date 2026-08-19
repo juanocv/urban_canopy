@@ -85,6 +85,20 @@ def test_default_checkpoint_is_used_when_the_flag_is_absent(monkeypatch, tmp_pat
     assert captured["ckpt_path"] == str(checkpoint)
     # Inference from the filename still runs on a default-supplied checkpoint.
     assert captured["model_name"] == "deeplabv3plus_mobilenet"
+    assert captured["allow_pickle"] is False
+
+
+def test_trust_checkpoint_enables_legacy_pickle(monkeypatch, tmp_path):
+    checkpoint = _checkpoint(tmp_path)
+    captured = {}
+    monkeypatch.setattr(
+        "urban_canopy.cli._builder.build_segmenter",
+        lambda backend, **kwargs: captured.update(kwargs) or object(),
+    )
+
+    build_segmenter_from_args(_args("--ckpt", str(checkpoint), "--trust-checkpoint"), "cpu")
+
+    assert captured["allow_pickle"] is True
 
 
 def test_flag_overrides_the_default(monkeypatch, tmp_path):

@@ -5,12 +5,13 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import importlib.util
-import json
 import os
 import platform
 import sys
 from dataclasses import asdict, dataclass
 from typing import Any
+
+from urban_canopy.io.json_io import json_dumps
 
 CORE_PACKAGES = [
     "joblib",
@@ -164,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
 
     report = collect_diagnostics()
     if args.json:
-        print(json.dumps(report, indent=2, ensure_ascii=False, default=str))
+        print(json_dumps(report, indent=2))
     else:
         _print_text(report)
     return 0

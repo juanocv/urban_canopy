@@ -14,12 +14,14 @@ mask intentionally omitted during export.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Sequence, cast
 
 import numpy as np
+
+from urban_canopy.io.atomic import atomic_write_text
+from urban_canopy.io.json_io import json_dumps
 
 from .rle import decode_rle, encode_rle
 
@@ -285,13 +287,13 @@ def build_predictions(
 
 def write_predictions(path: str | Path, payload: dict[str, Any]) -> Path:
     target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    return target
+    return atomic_write_text(target, json_dumps(payload))
 
 
 def load_predictions(path: str | Path) -> PredictionsFile:
     """Read a predictions file, rejecting an unknown schema loudly."""
+    import json
+
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     schema = str(data.get("schema", ""))
     if schema == "urban_canopy/predictions/1":

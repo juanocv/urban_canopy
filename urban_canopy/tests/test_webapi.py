@@ -113,3 +113,32 @@ def test_multi_view_equiangular(client):
     )
     assert response.status_code == 200
     assert response.json()["plan"]["planned_headings"] == [0, 120, 240]
+
+
+def test_multi_view_total_failure_is_a_bad_gateway(client, monkeypatch):
+    def fail(self, req):
+        raise RuntimeError("imagery unavailable")
+
+    monkeypatch.setattr(StreetViewClient, "fetch", fail)
+    response = client.post(
+        "/analyse/multi",
+        json={"lat": -23.0, "lon": -46.0, "offsets": [0, 90]},
+    )
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert detail["successful_headings"] == []
+    assert [failure["heading"] for failure in detail["failures"]] == [0, 90]
+
+
+def test_multi_view_rejects_impossible_success_minimum(client):
+    response = client.post(
+        "/analyse/multi",
+        json={
+            "lat": -23.0,
+            "lon": -46.0,
+            "offsets": [0, 90],
+            "min_successful_views": 3,
+        },
+    )
+    assert response.status_code == 422
+    assert "distinct planned headings (2)" in response.json()["detail"]

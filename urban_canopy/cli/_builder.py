@@ -135,7 +135,7 @@ def build_segmenter_from_args(args, device: str):
             ckpt_path=str(ckpt),
             model_name=model_name,
             taxonomy=taxonomy,
-            allow_pickle=True,
+            allow_pickle=args.trust_checkpoint,
             device=device,
             repo_path=str(Path(repo).expanduser()) if repo else None,
         )
@@ -171,6 +171,7 @@ def viewplan_from_args(args) -> ViewPlanConfig:
             pitch=args.pitch,
             fov=args.fov,
             size=args.size,
+            min_successful_views=args.min_successful_views,
         )
 
     if args.view_mode == "equiangular":
@@ -181,6 +182,7 @@ def viewplan_from_args(args) -> ViewPlanConfig:
             pitch=args.pitch,
             fov=args.fov,
             size=args.size,
+            min_successful_views=args.min_successful_views,
         )
 
     offsets = tuple(int(o.strip()) for o in args.offsets.split(",") if o.strip())
@@ -191,6 +193,7 @@ def viewplan_from_args(args) -> ViewPlanConfig:
         pitch=args.pitch,
         fov=args.fov,
         size=args.size,
+        min_successful_views=args.min_successful_views,
     )
 
 

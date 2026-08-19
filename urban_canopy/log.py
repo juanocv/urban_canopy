@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sys
@@ -11,6 +10,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from urban_canopy.io.json_io import json_dumps
 
 ROOT_LOGGER_NAME = "urban_canopy"
 TRUTHY = {"1", "true", "yes", "on", "debug"}
@@ -34,7 +35,7 @@ class JsonFormatter(logging.Formatter):
             payload["payload"] = data
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
-        return json.dumps(payload, ensure_ascii=False, default=str)
+        return json_dumps(payload)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:

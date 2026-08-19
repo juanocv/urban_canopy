@@ -97,6 +97,7 @@ def build_manifest(
     class_space: str,
     taxonomy: Any | None = None,
     model_name: str | None = None,
+    model_sha256: str | None = None,
     device: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -125,7 +126,12 @@ def build_manifest(
         },
         "cuda": cuda_version,
         "device": device,
-        "model": {"backend": backend, "name": model_name, "class_space": class_space},
+        "model": {
+            "backend": backend,
+            "name": model_name,
+            "class_space": class_space,
+            "checkpoint_sha256": model_sha256,
+        },
         "taxonomy": taxonomy.to_dict() if taxonomy is not None else None,
         "config": config.to_dict(),
         "seed": config.seed,

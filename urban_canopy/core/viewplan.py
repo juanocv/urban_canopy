@@ -51,6 +51,8 @@ class ViewPlanConfig:
     pitch: int = 0
     fov: int = 90
     size: str = "640x640"
+    #: Abort the run when fewer headings than this produce a usable result.
+    min_successful_views: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -62,6 +64,7 @@ class ViewPlanConfig:
             "pitch": self.pitch,
             "fov": self.fov,
             "size": self.size,
+            "min_successful_views": self.min_successful_views,
         }
 
 

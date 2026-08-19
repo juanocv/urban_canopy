@@ -228,6 +228,11 @@ Address, multi-view with a known street bearing:
 tree-ai "Av. Paulista 1578, Sao Paulo" --multi-view --reference-heading 45 --offsets 90,270
 ```
 
+Multi-view requires at least one usable heading by default. Set a stricter
+study rule with `--min-successful-views N`; failed headings are returned with
+their stage (`fetch` or `analysis`) and error type instead of disappearing into
+the logs.
+
 Export everything an evaluation or audit needs — one flag, everything lands in
 this run's directory:
 
@@ -286,6 +291,11 @@ Knobs worth knowing:
   `tree_source="vegetation_proxy"`.
 - `--view-mode offsets|equiangular|fixed` with `--offsets`, `--n-views` or
   `--headings` controls the multi-view plan deterministically.
+- `--min-successful-views N` aborts a multi-view run that produced too little
+  imagery for the study protocol.
+- DeepLab loads weights-only checkpoints by default. `--trust-checkpoint`
+  enables legacy pickle loading and must only be used for a trusted file.
+- Successful DeepLab runs record the checkpoint SHA-256 in the manifest.
 
 ## Web API
 

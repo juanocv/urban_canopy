@@ -92,6 +92,20 @@ def _run_analyse(args, parser) -> int:
     if args.multi_view and args.image:
         parser.error("--multi-view needs Street View (an address or --lat/--lon)")
 
+    plan = None
+    if args.multi_view:
+        from urban_canopy.core.viewplan import plan_headings
+
+        plan = viewplan_from_args(args)
+        if plan.min_successful_views < 1:
+            parser.error("--min-successful-views must be at least 1")
+        planned_count = len(plan_headings(plan))
+        if plan.min_successful_views > planned_count:
+            parser.error(
+                "--min-successful-views cannot exceed the number of distinct "
+                f"planned headings ({planned_count})"
+            )
+
     set_seed(args.seed)
 
     # Resolve before loading any weights, so an impossible request fails in
@@ -112,11 +126,23 @@ def _run_analyse(args, parser) -> int:
             print("No image could be analysed", file=sys.stderr)
             return 1
     elif args.multi_view:
-        plan = viewplan_from_args(args)
-        if args.address:
-            multi = pipe.analyse_address_multiview(args.address, plan=plan)
-        else:
-            multi = pipe.analyse_multiview(args.lat, args.lon, plan=plan)
+        from urban_canopy.core.pipeline import MultiViewAnalysisError
+
+        assert plan is not None
+        try:
+            if args.address:
+                multi = pipe.analyse_address_multiview(args.address, plan=plan)
+            else:
+                multi = pipe.analyse_multiview(args.lat, args.lon, plan=plan)
+        except MultiViewAnalysisError as exc:
+            print(f"Multi-view analysis failed: {exc}", file=sys.stderr)
+            for failure in exc.failures:
+                print(
+                    f"  heading={failure.heading} stage={failure.stage}: "
+                    f"{failure.error_type}: {failure.message}",
+                    file=sys.stderr,
+                )
+            return 2
         results = multi.views
     else:
         if args.address:
@@ -148,6 +174,7 @@ def _run_analyse(args, parser) -> int:
         class_space=pipe.segmenter.class_space,
         taxonomy=pipe.segmenter.taxonomy,
         model_name=getattr(pipe.segmenter, "model_name", None),
+        model_sha256=getattr(pipe.segmenter, "checkpoint_sha256", None),
         device=device,
     )
 

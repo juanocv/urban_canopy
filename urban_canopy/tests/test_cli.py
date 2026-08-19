@@ -221,6 +221,23 @@ def test_multiview_rejects_local_images(tmp_path, stub_backend):
         cli_main.main(["--image", str(image), "--multi-view"])
 
 
+def test_multiview_rejects_impossible_success_minimum(tmp_path, stub_backend):
+    with pytest.raises(SystemExit):
+        cli_main.main(
+            [
+                "--lat",
+                "-23",
+                "--lon",
+                "-46",
+                "--multi-view",
+                "--offsets",
+                "0,90",
+                "--min-successful-views",
+                "3",
+            ]
+        )
+
+
 def _write_eval_fixtures(tmp_path):
     mask = np.zeros((30, 40), bool)
     mask[5:15, 5:15] = True
