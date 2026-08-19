@@ -21,7 +21,7 @@ tree-mask resolution                     ← tree class, or explicit vegetation 
         ▼
 conservative refinement                  ← optional; growth-guarded
         ▼
-coverage indicators                      ← tree_coverage_ratio over valid pixels
+coverage indicators                      ← tree pixels / all image pixels
         ▼
 aggregation (multi-view)                 ← median/IQR/p25/p75; counts stay per view
         ▼
@@ -40,7 +40,7 @@ ground-truth export (see `docs/evaluation.md`).
 | `core/config.py` | `CanopyConfig`, seeds, run manifest |
 | `core/results.py` | `ViewResult`, `MultiViewResult`, quality flags, CSV rows |
 | `io/streetview.py` | GSV client, cache, geocoding, `ImageRequest`, pano metadata |
-| `io/image_io.py` | Decoding to RGB, valid-pixel mask, overlays |
+| `io/image_io.py` | Decoding to RGB and overlays |
 | `io/artifacts.py` | Per-view audit artifacts |
 | `io/geo.py` | Pure geographic helpers |
 | `models/taxonomy.py` | Class-space → group mapping; tree vs vegetation kept apart |
@@ -62,7 +62,7 @@ ground-truth export (see `docs/evaluation.md`).
 |---|---|
 | `StreetViewClient`, `ImageRequest`, geocoding, joblib cache | **Reused**; added pano-id/date recording, hashable request |
 | `io/geo.py` | **Reused** verbatim |
-| `read_rgb` normalisation | **Reused**; watermark handling became the valid-pixel mask |
+| `read_rgb` normalisation | **Reused**; Street View frames remain intact |
 | `log.py` (text/JSON logging) | **Reused** (`SWAI_*` → `UC_*`) |
 | `diagnostics.py` | **Reused**, trimmed to relevant deps |
 | Settings pattern (pydantic-settings, `.env`) | **Reused**, including the `extra="ignore"` regression fix and its test |
@@ -115,7 +115,10 @@ being measured. Heading plans here are deterministic and blind to the imagery.
   mislabel every pixel silently.
 - **`InstanceMask.source`**: `model` or `connected_components_heuristic`;
   metrics and reports carry it through.
-- **Valid pixels**: whatever is excluded (watermark strip) leaves numerator and
-  denominator together; ratios are always fractions of what was looked at.
+- **Complete-frame denominator**: Street View frames, including attribution and
+  watermark pixels, remain intact. Coverage is always divided by `H * W`.
+- **Prediction mask status**: `available`, `unavailable` (the class space has no
+  tree class) or `omitted` (mask export disabled). Only available masks enter
+  semantic metrics.
 - **Predictions interchange**: uncompressed COCO RLE, readable with or without
   pycocotools, manifest embedded.

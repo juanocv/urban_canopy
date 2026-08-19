@@ -154,7 +154,6 @@ def config_from_args(args) -> CanopyConfig:
         ),
         allow_vegetation_proxy=args.allow_vegetation_proxy,
         instance_mode=args.instances,
-        exclude_bottom_px=args.exclude_bottom_px,
         seed=args.seed,
     )
 

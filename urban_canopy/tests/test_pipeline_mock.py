@@ -84,6 +84,27 @@ def test_no_tree_class_without_proxy_is_flagged(tmp_path):
     assert result.coverage.vegetation_coverage_ratio == pytest.approx(0.25)
 
 
+def test_unavailable_tree_class_exports_no_semantic_mask(tmp_path):
+    from urban_canopy.evaluation.predictions import build_predictions
+
+    result = CanopyPipeline(segmenter=NoTreeClassSegmenter()).analyse_image(_image(tmp_path))
+    record = build_predictions([result])["images"][0]
+
+    assert record["tree_source"] == "unavailable"
+    assert record["mask_status"] == "unavailable"
+    assert record["mask"] is None
+
+
+def test_unavailable_tree_class_cannot_produce_heuristic_instances(tmp_path):
+    pipe = CanopyPipeline(
+        segmenter=NoTreeClassSegmenter(),
+        config=CanopyConfig(instance_mode="heuristic"),
+    )
+    result = pipe.analyse_image(_image(tmp_path))
+    assert result.instances is None
+    assert result.instance_source is None
+
+
 def test_no_tree_class_with_proxy_is_flagged_differently(tmp_path):
     pipe = CanopyPipeline(
         segmenter=NoTreeClassSegmenter(),
@@ -125,13 +146,25 @@ def test_instance_mode_none(tmp_path):
     assert result.instances is None
 
 
-def test_exclude_bottom_px_changes_denominator(tmp_path):
-    pipe = CanopyPipeline(segmenter=StubSegmenter(), config=CanopyConfig(exclude_bottom_px=20))
+def test_complete_frame_is_the_coverage_denominator(tmp_path):
+    pipe = CanopyPipeline(segmenter=StubSegmenter())
     result = pipe.analyse_image(_image(tmp_path))
-    # 80x120 frame, bottom 20 rows excluded -> 60*120 = 7200 valid; the tree
-    # quadrant (40x60 = 2400 px) sits fully inside the valid region.
-    assert result.coverage.valid_pixels == (80 - 20) * 120
-    assert result.coverage.tree_coverage_ratio == pytest.approx(2400 / 7200)
+    assert result.coverage.valid_pixels == 80 * 120
+    assert result.coverage.total_pixels == 80 * 120
+    assert result.coverage.tree_coverage_ratio == pytest.approx(0.25)
+
+
+class WrongShapeSegmenter(StubSegmenter):
+    def segment(self, img_rgb):
+        output = super().segment(img_rgb)
+        output.group_masks["tree"] = output.group_masks["tree"][:1, :]
+        return output
+
+
+def test_pipeline_rejects_backend_masks_with_the_wrong_shape(tmp_path):
+    pipe = CanopyPipeline(segmenter=WrongShapeSegmenter())
+    with pytest.raises(ValueError, match="shape"):
+        pipe.analyse_image(_image(tmp_path))
 
 
 def _stubbed_streetview(tmp_path, monkeypatch):

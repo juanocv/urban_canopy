@@ -92,7 +92,6 @@ def collect_diagnostics() -> dict[str, Any]:
         "UC_LOG_LEVEL",
         "UC_LOG_FORMAT",
         "UC_LOG_FILE",
-        "UC_IMG_EXCLUDE_BOTTOM_PX",
         "CUDA_HOME",
     ]
     env = {

@@ -155,13 +155,6 @@ def _add_processing_arguments(parser: argparse.ArgumentParser) -> None:
         "semantic mask into connected components and FLAGS them as a heuristic, "
         "not a tree count.",
     )
-    parser.add_argument(
-        "--exclude-bottom-px",
-        type=int,
-        default=None,
-        help="Exclude this bottom strip (Street View watermark) from the "
-        "valid-pixel denominator. Defaults to UC_IMG_EXCLUDE_BOTTOM_PX.",
-    )
     parser.add_argument("--seed", type=int, default=0, help="Random seed recorded in the manifest")
 
 

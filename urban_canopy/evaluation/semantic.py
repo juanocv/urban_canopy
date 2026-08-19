@@ -93,9 +93,8 @@ def binary_confusion(
     """
     Confusion counts between a predicted and an annotated mask.
 
-    *valid_mask* restricts the comparison to the pixels the prediction was
-    measured over, so the excluded watermark strip does not inflate the true
-    negatives (and with them any accuracy computed from them).
+    *valid_mask* is available for generic metric use. The Urban Canopy runner
+    passes ``None`` and evaluates the complete image.
     """
     p = np.asarray(pred).astype(bool)
     g = np.asarray(gt).astype(bool)

@@ -40,7 +40,6 @@ def test_settings_ignore_keys_meant_for_other_settings_classes(tmp_path, monkeyp
         "UC_DEBUG=1\n"
         "UC_LOG_LEVEL=DEBUG\n"
         "UC_SEG_BACKEND=deeplab\n"
-        "UC_IMG_EXCLUDE_BOTTOM_PX=20\n"
         "TORCH_HOME=/models/torch\n",
         encoding="utf-8",
     )

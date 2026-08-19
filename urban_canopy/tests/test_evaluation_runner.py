@@ -1,13 +1,15 @@
 """End-to-end evaluation: synthetic predictions file vs synthetic COCO export."""
 
 import json
+from dataclasses import replace
 
 import numpy as np
 import pytest
 
-from urban_canopy.evaluation.coco import CocoDataset
+from urban_canopy.evaluation.coco import CocoDataset, DatasetValidationError
 from urban_canopy.evaluation.predictions import (
     PREDICTIONS_SCHEMA,
+    PredictionValidationError,
     load_predictions,
     write_predictions,
 )
@@ -57,7 +59,7 @@ def _predictions(tmp_path, *, mask=None, with_instances=False, extra_record=None
         "tree_source": "tree_class",
         "valid_pixels": HEIGHT * WIDTH,
         "total_pixels": HEIGHT * WIDTH,
-        "exclude_bottom_px": 0,
+        "mask_status": "available",
         "mask": encode_rle(mask),
         "instances": (
             [{"label": "tree", "score": 0.9, "source": "model", "mask": encode_rle(mask)}]
@@ -78,7 +80,7 @@ def _predictions(tmp_path, *, mask=None, with_instances=False, extra_record=None
         "tree_source": "tree_class",
         "valid_pixels": HEIGHT * WIDTH,
         "total_pixels": HEIGHT * WIDTH,
-        "exclude_bottom_px": 0,
+        "mask_status": "available",
         "mask": encode_rle(np.zeros((HEIGHT, WIDTH), bool)),
         "instances": [] if with_instances else None,
         "instance_source": "model" if with_instances else None,
@@ -122,6 +124,31 @@ def test_semantic_only_predictions_skip_instances_with_reason(tmp_path):
     assert "instance" in report.instances_skipped_reason
 
 
+def test_unavailable_tree_class_is_not_scored_as_an_empty_prediction(tmp_path):
+    predictions = _predictions(tmp_path)
+    record = predictions.records[0]
+    record.tree_source = "unavailable"
+    record.tree_coverage_ratio = None
+    record.tree_coverage_pct = None
+    record.mask_status = "unavailable"
+    record.mask = None
+
+    report = evaluate(predictions, _coco(tmp_path))
+
+    # The other, genuinely empty prediction is still evaluated. The unavailable
+    # ADE/Cityscapes-style record is disclosed, not converted into false negatives.
+    assert report.semantic["n_images"] == 1
+    assert report.semantic_skipped_images == {"a.jpg": "unavailable"}
+    assert report.semantic["micro"]["fn"] == 0
+
+
+def test_duplicate_prediction_basenames_are_rejected(tmp_path):
+    predictions = _predictions(tmp_path)
+    predictions.records.append(replace(predictions.records[0], file_name="other/a.jpg"))
+    with pytest.raises(PredictionValidationError, match="basename 'a.jpg'"):
+        predictions.by_file_name
+
+
 def test_unmatched_images_are_listed_not_dropped(tmp_path):
     extra = {
         "file_name": "unlabelled.jpg",
@@ -132,7 +159,7 @@ def test_unmatched_images_are_listed_not_dropped(tmp_path):
         "tree_source": "tree_class",
         "valid_pixels": HEIGHT * WIDTH,
         "total_pixels": HEIGHT * WIDTH,
-        "exclude_bottom_px": 0,
+        "mask_status": "omitted",
         "mask": None,
         "instances": None,
         "instance_source": None,
@@ -163,6 +190,23 @@ def test_wrong_schema_is_rejected(tmp_path):
     path.write_text(json.dumps({"schema": "something/else", "images": []}), encoding="utf-8")
     with pytest.raises(ValueError, match="schema"):
         load_predictions(path)
+
+
+def test_legacy_schema_requires_regeneration(tmp_path):
+    path = tmp_path / "legacy.json"
+    path.write_text(
+        json.dumps({"schema": "urban_canopy/predictions/1", "images": []}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="legacy"):
+        load_predictions(path)
+
+
+def test_evaluation_refuses_dataset_without_a_tree_category(tmp_path):
+    dataset = _coco(tmp_path)
+    dataset.tree_category_ids = frozenset()
+    with pytest.raises(DatasetValidationError, match="No category"):
+        evaluate(_predictions(tmp_path), dataset)
 
 
 def test_manifest_travels_into_the_report(tmp_path):

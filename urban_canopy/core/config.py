@@ -40,9 +40,6 @@ class CanopyConfig:
     instance_mode: InstanceMode = "auto"
     #: Area floor for the connected-component heuristic.
     heuristic_min_area_px: int = 64
-    #: Bottom strip excluded from the valid-pixel denominator. None reads the
-    #: UC_IMG_EXCLUDE_BOTTOM_PX setting.
-    exclude_bottom_px: int | None = None
     #: Keep the decoded RGB frame on the result. Needed for artifacts and
     #: overlays; turn it off for long batch runs to bound memory.
     keep_rgb: bool = True
@@ -55,7 +52,6 @@ class CanopyConfig:
             "allow_vegetation_proxy": self.allow_vegetation_proxy,
             "instance_mode": self.instance_mode,
             "heuristic_min_area_px": self.heuristic_min_area_px,
-            "exclude_bottom_px": self.exclude_bottom_px,
             "keep_rgb": self.keep_rgb,
             "seed": self.seed,
         }

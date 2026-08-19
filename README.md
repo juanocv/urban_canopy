@@ -9,7 +9,7 @@ boundary.
 The primary indicator is continuous and per image:
 
 ```
-tree_coverage_ratio = tree pixels / valid pixels          (in [0, 1])
+tree_coverage_ratio = tree pixels / all image pixels      (in [0, 1])
 tree_coverage_pct   = 100 * tree_coverage_ratio
 ```
 
@@ -284,8 +284,6 @@ Knobs worth knowing:
 - `--allow-vegetation-proxy` lets DeepLab's `vegetation` class stand in for
   trees; results carry `tree_from_vegetation_proxy` and
   `tree_source="vegetation_proxy"`.
-- `--exclude-bottom-px N` removes the Street View watermark strip from **both**
-  numerator and denominator of the ratio. Keep it constant across a study.
 - `--view-mode offsets|equiangular|fixed` with `--offsets`, `--n-views` or
   `--headings` controls the multi-view plan deterministically.
 

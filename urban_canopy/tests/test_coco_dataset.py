@@ -130,6 +130,29 @@ def test_missing_top_level_key_raises(tmp_path):
         CocoDataset.load(_write(tmp_path, {"images": [], "annotations": []}))
 
 
+def test_duplicate_image_ids_are_rejected_while_loading(tmp_path):
+    data = _dataset_dict()
+    data["images"].append(dict(data["images"][0]))
+    with pytest.raises(DatasetValidationError, match="Duplicate image id"):
+        CocoDataset.load(_write(tmp_path, data))
+
+
+def test_strict_validation_rasterizes_and_rejects_bad_polygons(tmp_path):
+    data = _dataset_dict()
+    data["annotations"][0]["segmentation"] = [[0, 0, 1]]
+    dataset = CocoDataset.load(_write(tmp_path, data))
+    with pytest.raises(DatasetValidationError, match="invalid segmentation"):
+        dataset.validate(strict=True)
+
+
+def test_strict_validation_rejects_crowd_regions(tmp_path):
+    data = _dataset_dict()
+    data["annotations"][0]["iscrowd"] = 1
+    dataset = CocoDataset.load(_write(tmp_path, data))
+    with pytest.raises(DatasetValidationError, match="iscrowd"):
+        dataset.validate(strict=True)
+
+
 def test_custom_tree_category_names(tmp_path):
     data = _dataset_dict()
     data["categories"][0]["name"] = "arbol"

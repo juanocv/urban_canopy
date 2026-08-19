@@ -200,14 +200,8 @@ def _run_analyse(args, parser) -> int:
 
     if predictions_target is not None:
         from urban_canopy.evaluation.predictions import build_predictions, write_predictions
-        from urban_canopy.io.image_io import get_exclude_bottom_px
 
-        exclude = (
-            args.exclude_bottom_px
-            if args.exclude_bottom_px is not None
-            else get_exclude_bottom_px()
-        )
-        payload = build_predictions(results, manifest=manifest, exclude_bottom_px=exclude)
+        payload = build_predictions(results, manifest=manifest)
         target = _export_path(predictions_target, layout.predictions_json)
         write_predictions(target, payload)
         print(f"  {target.name:<12} for `tree-ai evaluate`")

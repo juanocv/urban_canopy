@@ -18,7 +18,7 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from urban_canopy.io.image_io import read_rgb, valid_pixel_mask
+from urban_canopy.io.image_io import read_rgb
 from urban_canopy.io.streetview import ImageRequest, StreetViewClient
 from urban_canopy.log import get_logger
 from urban_canopy.models.base import HEURISTIC_INSTANCES, MODEL_INSTANCES
@@ -228,11 +228,20 @@ class CanopyPipeline:
     def _analyse(self, img_rgb: np.ndarray, capture: CaptureParams) -> ViewResult:
         config = self.config
         rgb = np.asarray(img_rgb)
+        if rgb.ndim != 3 or rgb.shape[2] != 3:
+            raise ValueError(f"Expected an H x W x 3 RGB image, got shape {rgb.shape}.")
+        if rgb.dtype != np.uint8:
+            raise ValueError(f"Expected an uint8 RGB image, got dtype {rgb.dtype}.")
         height, width = rgb.shape[:2]
+        if height == 0 or width == 0:
+            raise ValueError("Cannot analyse an empty image.")
 
         output = self.segmenter.segment(rgb)
+        output.validate((height, width))
 
-        valid = valid_pixel_mask((height, width), exclude_bottom_px=config.exclude_bottom_px)
+        # Street View imagery is measured exactly as delivered. In particular,
+        # its attribution/watermark remains part of the frame and denominator.
+        valid = np.ones((height, width), dtype=bool)
 
         tree_raw, tree_source = resolve_tree_mask(
             output, allow_vegetation_proxy=config.allow_vegetation_proxy
@@ -265,7 +274,9 @@ class CanopyPipeline:
         if coverage.tree_coverage_ratio is not None and coverage.tree_coverage_ratio > 0.90:
             flags.append(QualityFlag.NEAR_TOTAL_COVERAGE)
 
-        instances, instance_source = self._resolve_instances(output, refined)
+        instances, instance_source = self._resolve_instances(
+            output, refined, tree_mask_available=tree_raw is not None
+        )
         if instance_source == HEURISTIC_INSTANCES:
             flags.append(QualityFlag.HEURISTIC_INSTANCES)
 
@@ -286,9 +297,9 @@ class CanopyPipeline:
             backend_notes=tuple(output.notes),
         )
 
-    def _resolve_instances(self, output, refined_mask: np.ndarray):
+    def _resolve_instances(self, output, refined_mask: np.ndarray, *, tree_mask_available: bool):
         mode = self.config.instance_mode
-        if mode == "none":
+        if mode == "none" or not tree_mask_available:
             return None, None
 
         if output.supports_tree_instances and output.instances is not None:

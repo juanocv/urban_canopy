@@ -90,8 +90,9 @@ def test_analyse_writes_all_exports(tmp_path, stub_backend):
     assert "tree_coverage_pct" in header
 
     preds = json.loads(predictions.read_text(encoding="utf-8"))
-    assert preds["schema"] == "urban_canopy/predictions/1"
+    assert preds["schema"] == "urban_canopy/predictions/2"
     assert preds["images"][0]["file_name"] == "frame.jpg"
+    assert preds["images"][0]["mask_status"] == "available"
     assert preds["images"][0]["mask"] is not None
 
     run_dir = _only_run_dir(tmp_path / "o")
@@ -240,7 +241,7 @@ def _write_eval_fixtures(tmp_path):
     ann_path.write_text(json.dumps(annotations), encoding="utf-8")
 
     predictions = {
-        "schema": "urban_canopy/predictions/1",
+        "schema": "urban_canopy/predictions/2",
         "manifest": {},
         "images": [
             {
@@ -252,7 +253,7 @@ def _write_eval_fixtures(tmp_path):
                 "tree_source": "tree_class",
                 "valid_pixels": 1200,
                 "total_pixels": 1200,
-                "exclude_bottom_px": 0,
+                "mask_status": "available",
                 "mask": encode_rle(mask),
                 "instances": None,
                 "instance_source": None,

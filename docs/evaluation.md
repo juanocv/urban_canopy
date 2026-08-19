@@ -13,6 +13,8 @@ tree-ai evaluate --predictions artifacts_out/<run>/predictions.json \
 
 The predictions file embeds the run manifest (model, versions, taxonomy,
 refinement config, seed), so every reported number is traceable.
+The current interchange schema is `urban_canopy/predictions/2`; version 1 files
+must be regenerated because they may have used a cropped denominator.
 
 The join is on the original image basename. For Roboflow exports that means
 `images[].extra.name`, which is preferred whenever present because Roboflow
@@ -28,8 +30,14 @@ never merged into one score.
 ## Level 1 — Semantic segmentation (pixels)
 
 Binary tree-vs-rest comparison between the predicted refined mask and the
-union of the annotated instances, restricted to the **valid pixels** the
-prediction was measured over (the excluded watermark strip leaves both sides).
+union of the annotated instances over the complete image. Street View
+attribution and watermark pixels remain untouched in both inference and ground
+truth evaluation.
+
+Images whose backend cannot express a tree class carry
+`mask_status="unavailable"`. They are listed under `semantic_skipped_images`
+and never converted into an all-background prediction. `mask_status="omitted"`
+similarly means that mask export was intentionally disabled.
 
 Reported per image and pooled:
 
@@ -75,7 +83,7 @@ ordering.
 
 Direct comparison of the published number, `tree_coverage_pred` vs
 `tree_coverage_gt`, both in percent, with `tree_coverage_gt` computed from the
-annotation union using the same valid-pixel denominator as the prediction.
+annotation union over the same complete image as the prediction.
 
 - **MAE** in percentage points (headline)
 - **RMSE** in percentage points
@@ -96,7 +104,7 @@ reported.
 - Zero-shot pre-trained backends with default settings: the whole labelled set
   may serve as test.
 - The moment any parameter is tuned by looking at results — refinement sizes,
-  score thresholds, taxonomy edits, `--exclude-bottom-px` — the set must be
+  score thresholds or taxonomy edits — the set must be
   split: a **calibration/validation** subset for tuning and a **held-out test**
   subset touched once, at the end. Record the split as file lists next to the
   annotations.

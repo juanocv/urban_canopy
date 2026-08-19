@@ -16,7 +16,6 @@ from typing import Iterable, Sequence, Union
 
 import cv2
 import numpy as np
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from urban_canopy.log import get_logger
 
@@ -25,8 +24,6 @@ logger = get_logger(__name__)
 __all__ = [
     "ImageLoadError",
     "read_rgb",
-    "get_exclude_bottom_px",
-    "valid_pixel_mask",
     "mask_overlay_bgr",
     "instances_overlay_bgr",
     "png_b64",
@@ -34,26 +31,6 @@ __all__ = [
 
 TREE_COLOR_BGR = (0, 200, 0)
 VEGETATION_COLOR_BGR = (0, 190, 190)
-
-
-class Settings(BaseSettings):
-    """Image-loading defaults, overridable through UC_IMG_* variables."""
-
-    model_config = SettingsConfigDict(env_prefix="UC_IMG_", extra="ignore")
-
-    # Height in pixels of the Street View watermark strip at the bottom of the
-    # frame. Those pixels are excluded from the valid-pixel denominator so the
-    # watermark cannot dilute the coverage ratio. Keep it constant across a
-    # study: changing it changes every ratio.
-    exclude_bottom_px: int = 0
-
-
-_cfg = Settings()
-
-
-def get_exclude_bottom_px() -> int:
-    """Configured height of the excluded bottom strip, in pixels."""
-    return int(_cfg.exclude_bottom_px)
 
 
 class ImageLoadError(RuntimeError):
@@ -89,38 +66,6 @@ def read_rgb(src: Union[str, Path, bytes, np.ndarray]) -> np.ndarray:
         arr = arr.copy()
 
     return cv2.cvtColor(arr, cv2.COLOR_BGR2RGB)
-
-
-def valid_pixel_mask(
-    shape: tuple[int, int],
-    *,
-    exclude_bottom_px: int | None = None,
-    extra_invalid: np.ndarray | None = None,
-) -> np.ndarray:
-    """
-    Boolean map of the pixels that count towards the coverage denominator.
-
-    The denominator is explicit rather than ``H * W`` because a Street View
-    frame carries a watermark strip that belongs to no scene class, and because
-    a caller may want to exclude a letterboxed border. Everything excluded here
-    is excluded from *both* numerator and denominator, so ratios stay in [0, 1].
-    """
-    height, width = int(shape[0]), int(shape[1])
-    valid = np.ones((height, width), dtype=bool)
-
-    bottom = get_exclude_bottom_px() if exclude_bottom_px is None else int(exclude_bottom_px)
-    if bottom > 0:
-        if bottom >= height:
-            raise ValueError(f"exclude_bottom_px={bottom} would drop the whole {height}px frame.")
-        valid[height - bottom :, :] = False
-
-    if extra_invalid is not None:
-        extra = np.asarray(extra_invalid).astype(bool)
-        if extra.shape != valid.shape:
-            raise ValueError(f"extra_invalid has shape {extra.shape}, expected {valid.shape}.")
-        valid &= ~extra
-
-    return valid
 
 
 def mask_overlay_bgr(

@@ -92,7 +92,8 @@ loader (`urban_canopy/evaluation/coco.py`) only treats categories named
 `iscrowd` regions are not used: a stand of trees too dense to separate should
 be annotated as one instance per *distinguishable* crown, or skipped and
 logged if none are distinguishable. The validator flags any `iscrowd`
-annotation it finds.
+annotation it finds, and evaluation refuses the dataset until the region is
+resolved or removed.
 
 ## 8. Process
 

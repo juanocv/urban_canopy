@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from urban_canopy.io.image_io import valid_pixel_mask
 from urban_canopy.log import get_logger
 
 from .coco import CocoDataset
@@ -37,6 +36,7 @@ class EvaluationReport:
     instances: dict[str, Any] | None
     instances_skipped_reason: str | None
     n_matched_images: int
+    semantic_skipped_images: dict[str, str] = field(default_factory=dict)
     unmatched_predictions: list[str] = field(default_factory=list)
     unmatched_annotations: list[str] = field(default_factory=list)
     manifest: dict[str, Any] = field(default_factory=dict)
@@ -44,9 +44,10 @@ class EvaluationReport:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema": "urban_canopy/evaluation/1",
+            "schema": "urban_canopy/evaluation/2",
             "settings": self.settings,
             "n_matched_images": self.n_matched_images,
+            "semantic_skipped_images": self.semantic_skipped_images,
             "unmatched_predictions": self.unmatched_predictions,
             "unmatched_annotations": self.unmatched_annotations,
             "semantic": self.semantic,
@@ -71,6 +72,9 @@ def evaluate(
     when none do, that level is skipped with the reason recorded, never
     silently reported as zero.
     """
+    # Evaluation is a publication boundary: warnings are insufficient when a
+    # malformed dataset would change the ground truth or the join cardinality.
+    dataset.validate(strict=True)
     pred_by_name = predictions.by_file_name
     gt_by_name = dataset.by_file_name
 
@@ -93,30 +97,47 @@ def evaluate(
     coverage_samples = []
     instance_samples = []
     instances_present = False
+    semantic_skipped: dict[str, str] = {}
 
     for name in shared:
         record = pred_by_name[name]
         image = gt_by_name[name]
-
-        gt_mask = dataset.semantic_mask(image.id)
-        pred_mask = record.tree_mask()
-        if pred_mask.shape != gt_mask.shape:
+        if (record.height, record.width) != (image.height, image.width):
             raise ValueError(
-                f"{name}: predicted mask is {pred_mask.shape}, annotation is "
-                f"{gt_mask.shape}. Evaluate against the same resolution the "
-                "model saw, or re-export the annotations at that size."
+                f"{name}: prediction declares {record.height}x{record.width}, annotation "
+                f"declares {image.height}x{image.width}. Evaluate the same image resolution."
             )
 
-        # Rebuild the same denominator the prediction used, so the ground-truth
-        # ratio is measured over the same pixels.
-        valid = valid_pixel_mask(gt_mask.shape, exclude_bottom_px=record.exclude_bottom_px)
+        gt_mask = dataset.semantic_mask(image.id)
+        if record.mask_status == "available":
+            pred_mask = record.tree_mask()
+            if pred_mask.shape != gt_mask.shape:
+                raise ValueError(
+                    f"{name}: predicted mask is {pred_mask.shape}, annotation is "
+                    f"{gt_mask.shape}. Evaluate against the same resolution the "
+                    "model saw, or re-export the annotations at that size."
+                )
+            semantic_pairs.append((name, pred_mask, gt_mask, None))
 
-        semantic_pairs.append((name, pred_mask, gt_mask, valid))
+            # The interchange file carries both mask and published ratio. Refuse
+            # an internally inconsistent record instead of evaluating two
+            # different predictions at levels 1 and 3.
+            ratio_from_mask = float(pred_mask.sum()) / float(pred_mask.size)
+            if (
+                record.tree_coverage_ratio is None
+                or not abs(float(record.tree_coverage_ratio) - ratio_from_mask) <= 1e-12
+            ):
+                raise ValueError(
+                    f"{name}: tree_coverage_ratio does not match the serialized mask "
+                    f"({record.tree_coverage_ratio!r} vs {ratio_from_mask})."
+                )
+        else:
+            semantic_skipped[name] = record.mask_status
 
         if record.tree_coverage_pct is not None:
             from urban_canopy.processing.coverage import coverage_from_mask
 
-            gt_pct = 100.0 * coverage_from_mask(gt_mask, valid)
+            gt_pct = 100.0 * coverage_from_mask(gt_mask)
             coverage_samples.append((name, float(record.tree_coverage_pct), gt_pct))
 
         if record.instances is not None:
@@ -167,6 +188,7 @@ def evaluate(
         instances=instances_report,
         instances_skipped_reason=skipped_reason,
         n_matched_images=len(shared),
+        semantic_skipped_images=semantic_skipped,
         unmatched_predictions=only_pred,
         unmatched_annotations=only_gt,
         manifest=dict(predictions.manifest),
@@ -174,6 +196,7 @@ def evaluate(
             "iou_threshold": iou_threshold,
             "annotations": str(dataset.path) if dataset.path else None,
             "join_key": "file basename",
+            "coverage_denominator": "complete image",
         },
     )
 
@@ -189,9 +212,6 @@ def evaluate_files(
     from .predictions import load_predictions
 
     dataset = CocoDataset.load(annotations_path)
-    problems = dataset.validate(strict=False)
-    for problem in problems:
-        logger.warning("Annotation check: %s", problem)
 
     return evaluate(
         load_predictions(predictions_path),

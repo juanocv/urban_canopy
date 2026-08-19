@@ -107,10 +107,13 @@ class CocoAnnotation:
         for polygon in seg:
             points = np.asarray(polygon, dtype=np.float64).reshape(-1, 2)
             if points.shape[0] < 3:
-                # A two-point "polygon" has no area; Roboflow occasionally emits
-                # one from a mis-click. Skipping it beats crashing the run.
-                logger.warning("Annotation %s has a polygon with < 3 points; skipped.", self.id)
-                continue
+                raise DatasetValidationError(
+                    f"Annotation {self.id} has a polygon with fewer than 3 points."
+                )
+            if not np.isfinite(points).all():
+                raise DatasetValidationError(
+                    f"Annotation {self.id} has non-finite polygon coordinates."
+                )
             cv2.fillPoly(mask, [np.round(points).astype(np.int32)], 1)
         return mask.astype(bool)
 
@@ -144,6 +147,9 @@ class CocoDataset:
 
         images: dict[int, CocoImage] = {}
         for raw in data["images"]:
+            image_id = int(raw["id"])
+            if image_id in images:
+                raise DatasetValidationError(f"Duplicate image id {image_id} in {source.name}.")
             extra = raw.get("extra") or {}
 
             original_name = None
@@ -152,24 +158,40 @@ class CocoDataset:
                 if value:
                     original_name = str(value)
 
-            images[int(raw["id"])] = CocoImage(
-                id=int(raw["id"]),
+            images[image_id] = CocoImage(
+                id=image_id,
                 file_name=str(raw["file_name"]),
                 width=int(raw["width"]),
                 height=int(raw["height"]),
                 original_file_name=original_name,
             )
 
-        categories = {int(c["id"]): str(c["name"]) for c in data["categories"]}
+        categories: dict[int, str] = {}
+        for raw in data["categories"]:
+            category_id = int(raw["id"])
+            if category_id in categories:
+                raise DatasetValidationError(
+                    f"Duplicate category id {category_id} in {source.name}."
+                )
+            categories[category_id] = str(raw["name"])
         wanted = {name.strip().lower() for name in tree_categories}
-        tree_ids = frozenset(cid for cid, name in categories.items() if name.lower() in wanted)
+        tree_ids = frozenset(
+            cid for cid, name in categories.items() if name.strip().lower() in wanted
+        )
 
         annotations: dict[int, list[CocoAnnotation]] = {image_id: [] for image_id in images}
+        annotation_ids: set[int] = set()
         for raw in data["annotations"]:
+            annotation_id = int(raw["id"])
+            if annotation_id in annotation_ids:
+                raise DatasetValidationError(
+                    f"Duplicate annotation id {annotation_id} in {source.name}."
+                )
+            annotation_ids.add(annotation_id)
             image_id = int(raw["image_id"])
             annotations.setdefault(image_id, []).append(
                 CocoAnnotation(
-                    id=int(raw["id"]),
+                    id=annotation_id,
                     image_id=image_id,
                     category_id=int(raw["category_id"]),
                     segmentation=raw.get("segmentation"),
@@ -229,6 +251,10 @@ class CocoDataset:
                         f"Annotation {ann.id} is marked iscrowd; crowd regions have no "
                         "individual instance and are excluded from instance matching."
                     )
+                try:
+                    ann.to_mask(image.height, image.width)
+                except (DatasetValidationError, TypeError, ValueError, OverflowError) as exc:
+                    problems.append(f"Annotation {ann.id} has invalid segmentation: {exc}")
 
         # Checked on the *join* key, not on the raw file_name: with a Roboflow
         # export those differ, and a collision that only shows up in match_name

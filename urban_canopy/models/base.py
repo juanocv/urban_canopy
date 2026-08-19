@@ -90,6 +90,65 @@ class SegmentationOutput:
         """Mask for a group, or None when this class space has no such group."""
         return self.group_masks.get(name)
 
+    def validate(self, expected_shape: tuple[int, int]) -> None:
+        """Reject malformed backend output before NumPy can broadcast it silently."""
+        shape = (int(expected_shape[0]), int(expected_shape[1]))
+        if min(shape) <= 0:
+            raise ValueError(f"Expected a positive output shape, got {shape}.")
+        if self.taxonomy.class_space != self.class_space:
+            raise ValueError(
+                f"Segmentation output declares class_space={self.class_space!r}, but its "
+                f"taxonomy declares {self.taxonomy.class_space!r}."
+            )
+
+        expected_groups = set(self.taxonomy.group_names)
+        actual_groups = set(self.group_masks)
+        if actual_groups != expected_groups:
+            missing = sorted(expected_groups - actual_groups)
+            extra = sorted(actual_groups - expected_groups)
+            raise ValueError(
+                "Segmentation output groups do not match the taxonomy "
+                f"(missing={missing}, extra={extra})."
+            )
+
+        for name, mask in self.group_masks.items():
+            arr = np.asarray(mask)
+            if arr.ndim != 2 or arr.shape != shape:
+                raise ValueError(
+                    f"Segmentation group {name!r} has shape {arr.shape}, expected {shape}."
+                )
+
+        if self.label_map is not None:
+            label_map = np.asarray(self.label_map)
+            if label_map.ndim != 2 or label_map.shape != shape:
+                raise ValueError(
+                    f"Segmentation label_map has shape {label_map.shape}, expected {shape}."
+                )
+
+        if self.instances is not None and not self.supports_tree_instances:
+            raise ValueError(
+                "Segmentation output carries instances but declares that tree instances "
+                "are unsupported."
+            )
+        if self.supports_tree_instances and self.instances is None:
+            raise ValueError(
+                "A backend that supports tree instances must return an empty list when "
+                "there are no detections, not None."
+            )
+        if self.supports_tree_instances and self.taxonomy.tree_group is None:
+            raise ValueError(
+                "A backend cannot support tree instances when its taxonomy has no " "tree group."
+            )
+        for index, instance in enumerate(self.instances or []):
+            mask = np.asarray(instance.mask)
+            if mask.ndim != 2 or mask.shape != shape:
+                raise ValueError(f"Tree instance {index} has shape {mask.shape}, expected {shape}.")
+            if self.taxonomy.group_for_label(instance.label) != self.taxonomy.tree_group:
+                raise ValueError(
+                    f"Tree instance {index} has label {instance.label!r}, which the "
+                    "taxonomy does not map to its tree group."
+                )
+
     def union(self, names: Iterable[str]) -> np.ndarray | None:
         """Union of several group masks; None when none of them exist."""
         masks = [self.group_masks[n] for n in names if n in self.group_masks]
