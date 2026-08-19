@@ -6,7 +6,7 @@ import pytest
 
 from urban_canopy.core.config import CanopyConfig
 from urban_canopy.core.pipeline import CanopyPipeline, MultiViewAnalysisError
-from urban_canopy.core.results import QualityFlag
+from urban_canopy.core.results import CaptureParams, QualityFlag
 from urban_canopy.core.viewplan import ViewPlanConfig
 from urban_canopy.io.streetview import Settings, StreetViewClient
 from urban_canopy.models.base import SegmentationOutput
@@ -75,6 +75,30 @@ def test_single_view_local_image(tmp_path):
     assert result.instances is None  # auto mode, backend has none
 
 
+def test_analyse_rgb_array_preserves_channel_order():
+    class RecordingSegmenter(StubSegmenter):
+        received = None
+
+        def segment(self, img_rgb):
+            self.received = img_rgb.copy()
+            return super().segment(img_rgb)
+
+    segmenter = RecordingSegmenter()
+    rgb = np.array([[[230, 20, 10], [40, 50, 60]]], dtype=np.uint8)
+    CanopyPipeline(segmenter=segmenter).analyse_rgb_array(
+        rgb, capture=CaptureParams(source="local")
+    )
+    np.testing.assert_array_equal(segmenter.received, rgb)
+
+
+def test_analyse_rgb_array_rejects_non_uint8():
+    with pytest.raises(ValueError, match="uint8"):
+        CanopyPipeline(segmenter=StubSegmenter()).analyse_rgb_array(
+            np.zeros((2, 2, 3), dtype=np.float32),
+            capture=CaptureParams(source="local"),
+        )
+
+
 def test_no_tree_class_without_proxy_is_flagged(tmp_path):
     pipe = CanopyPipeline(segmenter=NoTreeClassSegmenter())
     result = pipe.analyse_image(_image(tmp_path))
@@ -138,6 +162,19 @@ def test_heuristic_instances_are_flagged(tmp_path):
     assert QualityFlag.HEURISTIC_INSTANCES in result.quality_flags
     # The backend still reports that it cannot do real instances.
     assert result.instances_supported is False
+
+
+def test_omitting_instances_from_export_also_omits_their_source(tmp_path):
+    from urban_canopy.evaluation.predictions import build_predictions
+
+    pipe = CanopyPipeline(
+        segmenter=StubSegmenter(),
+        config=CanopyConfig(instance_mode="heuristic"),
+    )
+    result = pipe.analyse_image(_image(tmp_path))
+    record = build_predictions([result], include_instances=False)["images"][0]
+    assert record["instances"] is None
+    assert record["instance_source"] is None
 
 
 def test_instance_mode_none(tmp_path):

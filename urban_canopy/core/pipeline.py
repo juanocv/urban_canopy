@@ -18,7 +18,7 @@ from typing import Any, Iterator, Sequence
 
 import numpy as np
 
-from urban_canopy.io.image_io import read_rgb
+from urban_canopy.io.image_io import decode_rgb, ensure_rgb_u8
 from urban_canopy.io.streetview import ImageRequest, StreetViewClient
 from urban_canopy.log import get_logger
 from urban_canopy.models.base import HEURISTIC_INSTANCES, MODEL_INSTANCES
@@ -109,15 +109,19 @@ class CanopyPipeline:
     ) -> ViewResult:
         """Analyse an image already on disk, skipping Street View entirely."""
         path = Path(img_path)
-        rgb = read_rgb(path)
+        rgb = decode_rgb(path)
         params = capture or CaptureParams(source="local", image_path=str(path))
         if params.image_path is None:
             params = CaptureParams(**{**params.to_dict(), "image_path": str(path)})
-        return self.analyse_array(rgb, capture=params)
+        return self.analyse_rgb_array(rgb, capture=params)
+
+    def analyse_rgb_array(self, img_rgb: np.ndarray, *, capture: CaptureParams) -> ViewResult:
+        """Analyse a validated RGB frame without guessing or changing its colour space."""
+        return self._analyse(ensure_rgb_u8(img_rgb), capture)
 
     def analyse_array(self, img_rgb: np.ndarray, *, capture: CaptureParams) -> ViewResult:
-        """Analyse an in-memory RGB frame. Every other entry point funnels here."""
-        return self._analyse(img_rgb, capture)
+        """Compatibility alias for :meth:`analyse_rgb_array`; the input is RGB."""
+        return self.analyse_rgb_array(img_rgb, capture=capture)
 
     def analyse_coords(
         self,
@@ -294,14 +298,8 @@ class CanopyPipeline:
     # ------------------------------------------------------------------ #
     def _analyse(self, img_rgb: np.ndarray, capture: CaptureParams) -> ViewResult:
         config = self.config
-        rgb = np.asarray(img_rgb)
-        if rgb.ndim != 3 or rgb.shape[2] != 3:
-            raise ValueError(f"Expected an H x W x 3 RGB image, got shape {rgb.shape}.")
-        if rgb.dtype != np.uint8:
-            raise ValueError(f"Expected an uint8 RGB image, got dtype {rgb.dtype}.")
+        rgb = ensure_rgb_u8(img_rgb)
         height, width = rgb.shape[:2]
-        if height == 0 or width == 0:
-            raise ValueError("Cannot analyse an empty image.")
 
         output = self.segmenter.segment(rgb)
         output.validate((height, width))

@@ -143,14 +143,17 @@ def aggregate_views(views: Iterable, *, n_planned: int | None = None) -> MultiVi
 
     counts: list[int | None] = []
     supported = False
-    source: str | None = None
+    sources: set[str] = set()
     for view in views:
         if view.instances is None:
             counts.append(None)
             continue
         counts.append(len(view.instances))
         supported = supported or bool(view.instances_supported)
-        source = source or view.instance_source
+        if view.instance_source is not None:
+            sources.add(view.instance_source)
+
+    source = next(iter(sources)) if len(sources) == 1 else ("mixed" if sources else None)
 
     flags = sorted({flag for view in views for flag in view.quality_flags})
     notes = [NO_CROSS_VIEW_ASSOCIATION_NOTE] if any(c is not None for c in counts) else []

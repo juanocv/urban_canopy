@@ -36,6 +36,7 @@ class EvaluationReport:
     coverage: dict[str, Any] | None
     instances: dict[str, Any] | None
     instances_skipped_reason: str | None
+    instance_eligibility: dict[str, Any]
     n_matched_images: int
     semantic_skipped_images: dict[str, str] = field(default_factory=dict)
     unmatched_predictions: list[str] = field(default_factory=list)
@@ -55,6 +56,7 @@ class EvaluationReport:
             "coverage": self.coverage,
             "instances": self.instances,
             "instances_skipped_reason": self.instances_skipped_reason,
+            "instance_eligibility": self.instance_eligibility,
             "manifest": self.manifest,
         }
 
@@ -99,7 +101,7 @@ def evaluate(
     semantic_pairs = []
     coverage_samples = []
     instance_samples = []
-    instances_present = False
+    instance_excluded: dict[str, str] = {}
     semantic_skipped: dict[str, str] = {}
 
     for name in shared:
@@ -144,7 +146,6 @@ def evaluate(
             coverage_samples.append((name, float(record.tree_coverage_pct), gt_pct))
 
         if record.instances is not None:
-            instances_present = True
             instance_samples.append(
                 (
                     name,
@@ -153,6 +154,8 @@ def evaluate(
                     dataset.instance_masks(image.id),
                 )
             )
+        else:
+            instance_excluded[name] = "instances_unavailable"
 
     semantic_report = evaluate_semantic(semantic_pairs)
 
@@ -164,14 +167,24 @@ def evaluate(
 
     instances_report = None
     skipped_reason = None
-    if instances_present:
+    instance_eligibility = {
+        "n_shared": len(shared),
+        "n_eligible": len(instance_samples),
+        "excluded_images": instance_excluded,
+    }
+    if instance_samples:
+        sources = {pred_by_name[n].instance_source for n, *_ in instance_samples}
+        if len(sources) != 1:
+            raise ValueError(
+                "Instance evaluation cannot mix prediction origins in one metric; "
+                f"found {sorted(str(source) for source in sources)}. Evaluate model "
+                "and connected_components_heuristic predictions separately."
+            )
         instances_report = evaluate_instances(
             instance_samples, iou_threshold=iou_threshold
         ).to_dict()
-        sources = {pred_by_name[n].instance_source for n, *_ in instance_samples}
-        sources.discard(None)
-        if sources:
-            instances_report["instance_source"] = sorted(sources)
+        instances_report.update(instance_eligibility)
+        instances_report["instance_source"] = next(iter(sources))
     else:
         skipped_reason = (
             "No prediction carries instances. The selected backend produces "
@@ -190,6 +203,7 @@ def evaluate(
         coverage=coverage_report,
         instances=instances_report,
         instances_skipped_reason=skipped_reason,
+        instance_eligibility=instance_eligibility,
         n_matched_images=len(shared),
         semantic_skipped_images=semantic_skipped,
         unmatched_predictions=only_pred,

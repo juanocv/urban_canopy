@@ -312,9 +312,16 @@ python -m pip install -e ".[api,ml]"
 uvicorn urban_canopy.webapi:app --host 127.0.0.1 --port 8000
 ```
 
+The API reads the same backend settings as the CLI from `.env`: `UC_SEG_BACKEND`,
+`UC_SEG_MODEL`, `UC_DEVICE`, `UC_TAXONOMY`, the `UC_D2_*` pair and the
+`UC_DEEPLAB_*` values shown in `.env.example`. Invalid or incomplete backend
+configuration aborts startup before the server reports readiness.
+
 `POST /analyse/single` and `POST /analyse/multi` return the coverage metrics
-(with optional base64 overlays on `/single`); `GET /ping` is a liveness probe.
-Interactive docs at `/docs`. Dataset evaluation stays in the CLI.
+(with optional base64 overlays on `/single`) plus backend/checkpoint/taxonomy
+provenance. `GET /ping` is a liveness probe; `GET /ready` confirms model startup
+and returns the same provenance, including a SHA-256 when weights are local.
+Interactive docs are at `/docs`. Dataset evaluation stays in the CLI.
 
 The API has no authentication and calls a paid Google API on every request —
 keep it behind a proxy or bound to localhost.
@@ -337,6 +344,10 @@ instances, so the two levels can never disagree about what a tree pixel is.
 Every prediction file embeds a manifest (package versions, model name, device,
 taxonomy, refinement config, RNG seed and deterministic-runtime flags), so any
 reported number can be traced to the run that produced it.
+
+Instance reports disclose how many shared images were eligible and list those
+excluded for lacking instances. Predictions from a model and from the
+connected-component heuristic are rejected if combined in one instance metric.
 
 ## Quality checks
 

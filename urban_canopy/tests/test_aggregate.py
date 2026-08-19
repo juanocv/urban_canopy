@@ -52,12 +52,12 @@ class _Capture:
 
 
 class _View:
-    def __init__(self, tree, veg=None, heading=0, instances=None, flags=()):
+    def __init__(self, tree, veg=None, heading=0, instances=None, flags=(), source="model"):
         self.coverage = _Coverage(tree, veg)
         self.capture = _Capture(heading)
         self.instances = instances
         self.instances_supported = instances is not None
-        self.instance_source = "model" if instances is not None else None
+        self.instance_source = source if instances is not None else None
         self.quality_flags = tuple(flags)
 
 
@@ -79,6 +79,16 @@ def test_aggregate_views_mixed_instance_support():
     views = [_View(0.3, instances=None), _View(0.5, instances=[object()])]
     aggregate = aggregate_views(views)
     assert aggregate.instance_counts == (None, 1)
+
+
+def test_aggregate_views_discloses_mixed_instance_origins():
+    aggregate = aggregate_views(
+        [
+            _View(0.3, instances=[object()], source="model"),
+            _View(0.5, instances=[object()], source="connected_components_heuristic"),
+        ]
+    )
+    assert aggregate.instance_source == "mixed"
 
 
 def test_aggregate_views_collects_quality_flags_and_headings():

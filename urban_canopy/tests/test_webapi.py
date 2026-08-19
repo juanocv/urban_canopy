@@ -41,7 +41,7 @@ def client(tmp_path, monkeypatch):
     frame = tmp_path / "sv.jpg"
     cv2.imwrite(str(frame), np.zeros((40, 60, 3), np.uint8))
 
-    monkeypatch.setattr(uc, "build_segmenter", lambda *a, **k: StubSegmenter())
+    monkeypatch.setattr(webapi, "build_segmenter_from_settings", lambda settings: StubSegmenter())
     monkeypatch.setattr(
         uc,
         "StreetViewClient",
@@ -63,6 +63,16 @@ def test_ping(client):
     assert response.json() == {"status": "ok"}
 
 
+def test_readiness_exposes_backend_provenance(client):
+    response = client.get("/ready")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ready"
+    assert payload["backend"]["backend"] == "stub"
+    assert payload["backend"]["class_space"] == "ade20k"
+    assert payload["backend"]["taxonomy"]["class_space"] == "ade20k"
+
+
 def test_single_view(client):
     response = client.post("/analyse/single", json={"lat": -23.0, "lon": -46.0, "heading": 90})
     assert response.status_code == 200
@@ -70,6 +80,7 @@ def test_single_view(client):
     assert payload["coverage"]["tree_coverage_pct"] == pytest.approx(50.0)
     assert payload["coverage"]["tree_source"] == "tree_class"
     assert payload["capture"]["heading"] == 90
+    assert payload["backend_provenance"]["backend"] == "stub"
 
 
 def test_single_view_by_address(client):
@@ -104,6 +115,7 @@ def test_single_view_without_overlays_uses_non_rgb_pipeline(client):
     "payload",
     [
         {"lat": 91, "lon": 0},
+        {"lat": 0, "lon": 181},
         {"lat": 0},
         {"lat": 0, "lon": 0, "size": "640*640"},
         {"lat": 0, "lon": 0, "size": "5000x640"},
@@ -124,6 +136,7 @@ def test_multi_view(client):
     assert payload["aggregate"]["tree_coverage"]["median"] == pytest.approx(0.5)
     assert len(payload["views"]) == 4
     assert "instance_counts_per_view" in payload["aggregate"]
+    assert payload["backend_provenance"]["backend"] == "stub"
 
 
 def test_multi_view_equiangular(client):

@@ -64,7 +64,7 @@ ground-truth export (see `docs/evaluation.md`).
 |---|---|
 | `StreetViewClient`, `ImageRequest`, geocoding, joblib cache | **Reused**; added pano-id/date recording, hashable request |
 | `io/geo.py` | **Reused** verbatim |
-| `read_rgb` normalisation | **Reused**; Street View frames remain intact |
+| Image decoding | **Adapted**; `decode_rgb`, `from_bgr_array` and `ensure_rgb_u8` keep encoded, BGR and RGB inputs explicit while Street View frames remain intact |
 | `log.py` (text/JSON logging) | **Reused** (`SWAI_*` → `UC_*`) |
 | `diagnostics.py` | **Reused**, trimmed to relevant deps |
 | Settings pattern (pydantic-settings, `.env`) | **Reused**, including the `extra="ignore"` regression fix and its test |

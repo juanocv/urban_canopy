@@ -95,6 +95,12 @@ def test_unscored_predictions_rank_by_area():
     assert result.ranked_by == "area"
 
 
+def test_scores_must_align_one_to_one_with_instances():
+    mask = _blob((10, 10), 0, 5, 0, 5)
+    with pytest.raises(ValueError, match="scores length"):
+        match_instances([mask, mask], [mask], scores=[0.9])
+
+
 def test_average_precision_perfect_detector():
     ap = average_precision([([0.9, 0.8], [True, True], 2)])
     assert ap == pytest.approx(1.0)
@@ -130,3 +136,15 @@ def test_evaluate_instances_without_scores_skips_ap_with_reason():
     assert "score" in report.ap_unavailable_reason
     # The threshold metrics are still defined.
     assert report.recall == pytest.approx(1.0)
+
+
+def test_dataset_reports_mixed_ranking_modes():
+    shape = (20, 20)
+    gt = [_blob(shape, 0, 10, 0, 10)]
+    report = evaluate_instances(
+        [
+            ("scored.jpg", [gt[0].copy()], [0.9], gt),
+            ("unscored.jpg", [gt[0].copy()], [None], gt),
+        ]
+    )
+    assert report.ranked_by == "mixed"

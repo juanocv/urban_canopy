@@ -22,7 +22,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from urban_canopy.log import get_logger
 from urban_canopy.io.atomic import atomic_write_bytes
-from urban_canopy.io.image_io import ImageLoadError, read_rgb
+from urban_canopy.io.image_io import ImageLoadError, decode_rgb
 from urban_canopy.validation import (
     validate_fov,
     validate_heading,
@@ -145,7 +145,7 @@ class StreetViewClient:
         local_path = Path(self.cache.location) / req.filename
         if local_path.exists():
             try:
-                read_rgb(local_path)
+                decode_rgb(local_path)
             except ImageLoadError as exc:
                 logger.warning("Ignoring corrupt Street View cache entry %s: %s", local_path, exc)
             else:
@@ -171,7 +171,7 @@ class StreetViewClient:
         if len(content) < 1024:
             raise RuntimeError("Street View returned an empty image.")
         try:
-            read_rgb(content)
+            decode_rgb(content)
         except ImageLoadError as exc:
             raise RuntimeError(
                 "Street View returned bytes that are not a decodable image."

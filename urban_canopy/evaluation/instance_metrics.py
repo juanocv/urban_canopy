@@ -126,6 +126,10 @@ def _order(
     preds: Sequence[np.ndarray], scores: Sequence[float | None] | None
 ) -> tuple[list[int], str]:
     """Prediction order for greedy matching, and the criterion used."""
+    if scores is not None and len(scores) != len(preds):
+        raise ValueError(
+            f"scores length ({len(scores)}) must match instances length ({len(preds)})."
+        )
     if scores is not None and all(s is not None and np.isfinite(s) for s in scores):
         order = sorted(range(len(preds)), key=lambda i: -float(scores[i]))
         return order, "score"
@@ -328,7 +332,12 @@ def evaluate_instances(
         finite = [v for v in sweep if np.isfinite(v)]
         ap50_95 = float(np.mean(finite)) if finite else float("nan")
 
-    ranked_by = results[0].ranked_by if results else "score"
+    ranking_modes = {result.ranked_by for result in results}
+    ranked_by = (
+        next(iter(ranking_modes))
+        if len(ranking_modes) == 1
+        else ("mixed" if ranking_modes else "score")
+    )
     denominator = 2 * tp + fp + fn
     return InstanceReport(
         iou_threshold=float(iou_threshold),

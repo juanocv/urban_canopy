@@ -122,6 +122,35 @@ def test_semantic_only_predictions_skip_instances_with_reason(tmp_path):
     report = evaluate(_predictions(tmp_path, with_instances=False), _coco(tmp_path))
     assert report.instances is None
     assert "instance" in report.instances_skipped_reason
+    assert report.instance_eligibility == {
+        "n_shared": 2,
+        "n_eligible": 0,
+        "excluded_images": {
+            "a.jpg": "instances_unavailable",
+            "empty.jpg": "instances_unavailable",
+        },
+    }
+
+
+def test_instance_evaluation_discloses_ineligible_shared_images(tmp_path):
+    predictions = _predictions(tmp_path, with_instances=True)
+    predictions.records[1].instances = None
+    predictions.records[1].instance_source = None
+
+    report = evaluate(predictions, _coco(tmp_path))
+
+    assert report.instances["n_images"] == 1
+    assert report.instances["n_shared"] == 2
+    assert report.instances["n_eligible"] == 1
+    assert report.instances["excluded_images"] == {"empty.jpg": "instances_unavailable"}
+
+
+def test_instance_evaluation_rejects_mixed_prediction_origins(tmp_path):
+    predictions = _predictions(tmp_path, with_instances=True)
+    predictions.records[1].instance_source = "connected_components_heuristic"
+
+    with pytest.raises(ValueError, match="cannot mix prediction origins"):
+        evaluate(predictions, _coco(tmp_path))
 
 
 def test_unavailable_tree_class_is_not_scored_as_an_empty_prediction(tmp_path):

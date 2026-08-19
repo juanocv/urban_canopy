@@ -38,6 +38,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from urban_canopy.log import configure_logging, get_logger
+from urban_canopy.models.backend_settings import (
+    BackendSettings,
+    backend_provenance,
+    build_segmenter_from_settings,
+)
 from urban_canopy.validation import (
     validate_image_size,
     validate_latitude,
@@ -46,8 +51,6 @@ from urban_canopy.validation import (
 
 configure_logging(force=False)
 logger = get_logger(__name__)
-
-DEFAULT_BACKEND = os.getenv("UC_SEG_BACKEND", "oneformer")
 
 # Serialises model work; see the module docstring.
 MAX_CONCURRENCY = max(1, int(os.getenv("UC_API_MAX_CONCURRENCY", "1")))
@@ -108,14 +111,17 @@ class PipelineRegistry:
 async def lifespan(app: FastAPI):
     import urban_canopy as uc
 
+    backend_settings = BackendSettings()
     logger.info(
         "Starting Urban Canopy API (backend=%s, max_concurrency=%s)",
-        DEFAULT_BACKEND,
+        backend_settings.backend,
         MAX_CONCURRENCY,
     )
-    segmenter = uc.build_segmenter(DEFAULT_BACKEND)
+    segmenter = build_segmenter_from_settings(backend_settings)
     streetview = uc.StreetViewClient()
 
+    app.state.backend_settings = backend_settings
+    app.state.backend_provenance = backend_provenance(segmenter, backend_settings)
     app.state.registry = PipelineRegistry(segmenter, streetview)
     app.state.registry.get(refine=True, allow_vegetation_proxy=False)
     logger.info("Urban Canopy API ready")
@@ -148,8 +154,8 @@ class SingleViewRequest(BaseModel):
         json_schema_extra={"example": "Av. Paulista 1578, Sao Paulo"},
         description="Ignored if lat+lon are given",
     )
-    lat: float | None = Field(None, description="Latitude (decimal deg)")
-    lon: float | None = Field(None, description="Longitude (decimal deg)")
+    lat: float | None = Field(None, ge=-90, le=90, description="Latitude (decimal deg)")
+    lon: float | None = Field(None, ge=-180, le=180, description="Longitude (decimal deg)")
     heading: int = Field(0, ge=0, le=359)
     pitch: int = Field(0, ge=-90, le=90)
     fov: int = Field(90, ge=10, le=120)
@@ -186,8 +192,8 @@ class MultiViewRequest(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
 
     address: str | None = None
-    lat: float | None = None
-    lon: float | None = None
+    lat: float | None = Field(None, ge=-90, le=90)
+    lon: float | None = Field(None, ge=-180, le=180)
     reference_heading: int = Field(0, ge=0, le=359)
     mode: Literal["offsets", "equiangular"] = "offsets"
     offsets: list[int] = Field(default_factory=lambda: [0, 90, 180, 270], min_length=1)
@@ -260,6 +266,14 @@ def ping() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/ready")
+def ready() -> dict[str, Any]:
+    provenance = getattr(app.state, "backend_provenance", None)
+    if provenance is None:
+        raise HTTPException(503, "Backend is not ready")
+    return {"status": "ready", "backend": provenance}
+
+
 @app.post("/analyse/single")
 def analyse_single(req: SingleViewRequest) -> dict[str, Any]:
     lat, lon = _resolve_location(req)
@@ -278,6 +292,7 @@ def analyse_single(req: SingleViewRequest) -> dict[str, Any]:
             raise HTTPException(500, f"Analysis failed: {exc}") from exc
 
     payload = result.to_dict()
+    payload["backend_provenance"] = app.state.backend_provenance
     if req.address:
         payload["capture"]["address"] = req.address
     if req.return_overlays:
@@ -323,4 +338,6 @@ def analyse_multi(req: MultiViewRequest) -> dict[str, Any]:
             logger.exception("Multi-view analysis failed")
             raise HTTPException(500, f"Analysis failed: {exc}") from exc
 
-    return result.to_dict()
+    payload = result.to_dict()
+    payload["backend_provenance"] = app.state.backend_provenance
+    return payload

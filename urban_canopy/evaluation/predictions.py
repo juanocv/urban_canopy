@@ -143,11 +143,59 @@ class PredictionRecord:
                     f"with tree_coverage_ratio={ratio!r}."
                 )
 
+        allowed_sources = {"model", "connected_components_heuristic"}
+        if self.instances is None:
+            if self.instance_source is not None:
+                raise PredictionValidationError(
+                    f"{self.file_name!r} declares instance_source={self.instance_source!r} "
+                    "but instances are unavailable."
+                )
+        else:
+            if self.instance_source not in allowed_sources:
+                raise PredictionValidationError(
+                    f"{self.file_name!r} has instances but an invalid or missing "
+                    f"instance_source={self.instance_source!r}."
+                )
+            for index, instance in enumerate(self.instances):
+                if not isinstance(instance, dict) or "mask" not in instance:
+                    raise PredictionValidationError(
+                        f"{self.file_name!r} instance {index} needs a mask object."
+                    )
+                mask = decode_rle(instance["mask"])
+                if mask.shape != (self.height, self.width):
+                    raise PredictionValidationError(
+                        f"{self.file_name!r} instance {index} has shape {mask.shape}, "
+                        f"expected {(self.height, self.width)}."
+                    )
+                source = instance.get("source", self.instance_source)
+                if source != self.instance_source:
+                    raise PredictionValidationError(
+                        f"{self.file_name!r} instance {index} declares source={source!r}, "
+                        f"different from record source={self.instance_source!r}."
+                    )
+                score = instance.get("score")
+                if score is not None:
+                    if isinstance(score, (bool, np.bool_)) or not isinstance(
+                        score, (int, float, np.integer, np.floating)
+                    ):
+                        raise PredictionValidationError(
+                            f"{self.file_name!r} instance {index} has a non-numeric "
+                            f"score={score!r}."
+                        )
+                    numeric_score = float(score)
+                    if not np.isfinite(numeric_score) or not 0.0 <= numeric_score <= 1.0:
+                        raise PredictionValidationError(
+                            f"{self.file_name!r} instance {index} has invalid " f"score={score!r}."
+                        )
+
     def instance_masks(self) -> list[np.ndarray]:
         return [decode_rle(inst["mask"]) for inst in (self.instances or [])]
 
     def instance_scores(self) -> list[float | None]:
-        return [inst.get("score") for inst in (self.instances or [])]
+        return [
+            None if inst.get("score") is None else float(inst["score"])
+            for inst in (self.instances or [])
+        ]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -255,7 +303,7 @@ def _record_from_result(result, *, include_mask: bool, include_instances: bool) 
         mask_status=mask_status,
         mask=mask,
         instances=instances,
-        instance_source=result.instance_source,
+        instance_source=result.instance_source if instances is not None else None,
         quality_flags=list(result.quality_flags),
         backend=result.backend,
         class_space=result.class_space,
