@@ -6,7 +6,7 @@ import hashlib
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from urban_canopy.log import get_logger
@@ -50,8 +50,6 @@ class BackendSettings(BaseSettings):
         "semantic", validation_alias="UC_SEG_TASK"
     )
 
-    d2_config: Path | None = Field(None, validation_alias="UC_D2_CONFIG")
-    d2_weights: Path | None = Field(None, validation_alias="UC_D2_WEIGHTS")
     d2_score_threshold: float = Field(0.50, validation_alias="UC_D2_SCORE_THRESH")
 
     deeplab_checkpoint: Path | None = Field(None, validation_alias="UC_DEEPLAB_CKPT")
@@ -62,8 +60,6 @@ class BackendSettings(BaseSettings):
     @field_validator(
         "model_name",
         "taxonomy_path",
-        "d2_config",
-        "d2_weights",
         "deeplab_checkpoint",
         "deeplab_repo",
         "deeplab_model",
@@ -77,12 +73,6 @@ class BackendSettings(BaseSettings):
     @classmethod
     def _score_threshold(cls, value):
         return validate_probability(value, name="d2_score_threshold")
-
-    @model_validator(mode="after")
-    def _paired_detectron_files(self):
-        if (self.d2_config is None) != (self.d2_weights is None):
-            raise ValueError("UC_D2_CONFIG and UC_D2_WEIGHTS must be configured together.")
-        return self
 
     @classmethod
     def from_cli_args(cls, args, *, device: str) -> BackendSettings:
@@ -101,8 +91,6 @@ class BackendSettings(BaseSettings):
             "trust_checkpoint": args.trust_checkpoint,
             "model_name": args.seg_model,
             "taxonomy_path": args.taxonomy,
-            "d2_config": args.d2_config,
-            "d2_weights": args.d2_weights,
             "deeplab_checkpoint": args.ckpt,
             "deeplab_repo": args.deeplab_repo,
             "deeplab_model": args.deeplab_model,
@@ -117,8 +105,6 @@ class BackendSettings(BaseSettings):
             return self.model_name
         if self.backend == "deeplab" and self.deeplab_checkpoint is not None:
             return self.deeplab_checkpoint.name
-        if self.backend == "detectron2" and self.d2_weights is not None:
-            return self.d2_weights.name
         if self.backend == "detectron2":
             return "COCO-PanopticSegmentation/panoptic_fpn_R_50_3x.yaml"
         return None
@@ -199,14 +185,6 @@ def build_segmenter_from_settings(
             "score_thresh": settings.d2_score_threshold,
             "device": device,
         }
-        if settings.d2_config is not None:
-            config = _require_existing(settings.d2_config, setting="UC_D2_CONFIG/--d2-config")
-            weights = _require_existing(settings.d2_weights, setting="UC_D2_WEIGHTS/--d2-weights")
-            kwargs.update(
-                config_yml=str(config),
-                weights_path=str(weights),
-                mode="instance",
-            )
         return builder("detectron2", **kwargs)
 
     checkpoint = _require_existing(
@@ -244,11 +222,7 @@ def backend_provenance(segmenter: Any, settings: BackendSettings) -> dict[str, A
     device = getattr(segmenter, "device", None) or resolve_device(settings.device)
     checkpoint_hash = getattr(segmenter, "checkpoint_sha256", None)
     if checkpoint_hash is None:
-        local_checkpoint = (
-            settings.deeplab_checkpoint
-            if settings.backend == "deeplab"
-            else settings.d2_weights if settings.backend == "detectron2" else None
-        )
+        local_checkpoint = settings.deeplab_checkpoint if settings.backend == "deeplab" else None
         if local_checkpoint is not None and local_checkpoint.is_file():
             checkpoint_hash = _sha256_file(local_checkpoint)
     taxonomy = getattr(segmenter, "taxonomy", None)

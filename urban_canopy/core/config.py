@@ -17,14 +17,13 @@ import random
 import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 
 from urban_canopy.processing.refinement import RefinementConfig
-from urban_canopy.validation import validate_bool, validate_choice, validate_int_range
+from urban_canopy.validation import validate_bool, validate_int_range
 
 __all__ = ["CanopyConfig", "build_manifest", "set_seed"]
 
-InstanceMode = Literal["auto", "none", "heuristic"]
 _LAST_REPRODUCIBILITY: dict[str, Any] | None = None
 
 
@@ -36,12 +35,6 @@ class CanopyConfig:
     #: Allow a wider vegetation class to stand in for trees when the backend's
     #: class space has none. Off by default; when on, every result says so.
     allow_vegetation_proxy: bool = False
-    #: "auto" keeps model instances when the backend produces them and nothing
-    #: otherwise; "heuristic" derives connected components from the semantic mask
-    #: and flags them as such; "none" never reports instances.
-    instance_mode: InstanceMode = "auto"
-    #: Area floor for the connected-component heuristic.
-    heuristic_min_area_px: int = 64
     #: Keep the decoded RGB frame on the result. Needed for artifacts and
     #: overlays; turn it off for long batch runs to bound memory.
     keep_rgb: bool = False
@@ -55,25 +48,12 @@ class CanopyConfig:
         validate_bool(self.allow_vegetation_proxy, name="allow_vegetation_proxy")
         validate_bool(self.keep_rgb, name="keep_rgb")
         validate_bool(self.deterministic, name="deterministic")
-        validate_choice(
-            self.instance_mode,
-            name="instance_mode",
-            choices=("auto", "none", "heuristic"),
-        )
-        validate_int_range(
-            self.heuristic_min_area_px,
-            name="heuristic_min_area_px",
-            minimum=0,
-            maximum=2**31 - 1,
-        )
         validate_int_range(self.seed, name="seed", minimum=0, maximum=2**32 - 1)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "refinement": asdict(self.refinement),
             "allow_vegetation_proxy": self.allow_vegetation_proxy,
-            "instance_mode": self.instance_mode,
-            "heuristic_min_area_px": self.heuristic_min_area_px,
             "keep_rgb": self.keep_rgb,
             "seed": self.seed,
             "deterministic": self.deterministic,

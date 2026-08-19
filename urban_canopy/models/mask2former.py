@@ -21,10 +21,10 @@ spaces, isolating "which classes exist" from "which model predicts them".
   merges trees with bushes. Coverage is reported as unavailable unless the
   caller explicitly enables the vegetation proxy.
 
-Consequently ``instances`` is never populated here, for the same reason as
-OneFormer: in every one of those spaces the tree class is stuff, so no
-checkpoint separates individual trees. Instance-task checkpoints exist
-(``*-instance``) but their thing classes do not include ``tree``.
+In every one of those spaces the tree class is stuff, so no checkpoint separates
+individual trees. Instance-task checkpoints exist (``*-instance``) but their
+thing classes do not include ``tree`` -- which is why this project measures
+coverage only.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ def infer_task(model_name: str) -> Task:
         # their masks is still a valid coverage measure.
         logger.warning(
             "%s is an instance checkpoint, but no Mask2Former class space has tree as a "
-            "thing class. Reading it as semantic coverage; instances stay unavailable.",
+            "thing class. Reading it as semantic coverage.",
             model_name,
         )
         return "semantic"
@@ -81,8 +81,6 @@ def infer_task(model_name: str) -> Task:
 
 class Mask2FormerSegmenter:
     """Vegetation segmentation through Mask2Former."""
-
-    supports_tree_instances = False
 
     def __init__(
         self,
@@ -175,8 +173,6 @@ class Mask2FormerSegmenter:
             group_masks=build_group_masks(self.taxonomy, labelled, (height, width)),
             label_map=label_map,
             segments=segments,
-            instances=None,
-            supports_tree_instances=False,
             notes=tuple(notes),
         )
 
@@ -212,9 +208,9 @@ class Mask2FormerSegmenter:
             class_id = raw.get("label_id", raw.get("category_id"))
             name = self._id2label.get(int(class_id), str(class_id))
             segment_id = int(raw["id"])
-            # transformers' panoptic post-processing does not report isthing, and
-            # this adapter never emits instances anyway, so segments are recorded
-            # as stuff rather than guessed at.
+            # transformers' panoptic post-processing does not report isthing, so
+            # segments are recorded as stuff rather than guessed at; nothing
+            # downstream distinguishes them.
             segments.append(
                 Segment(
                     id=segment_id,

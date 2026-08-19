@@ -18,7 +18,6 @@ class StubSegmenter:
     backend_name = "stub"
     class_space = "ade20k"
     taxonomy = ADE20K
-    supports_tree_instances = False
 
     def segment(self, img_rgb):
         height, width = img_rgb.shape[:2]
@@ -135,7 +134,6 @@ def test_multi_view(client):
     assert payload["aggregate"]["tree_coverage"]["n_valid_views"] == 4
     assert payload["aggregate"]["tree_coverage"]["median"] == pytest.approx(0.5)
     assert len(payload["views"]) == 4
-    assert "instance_counts_per_view" in payload["aggregate"]
     assert payload["backend_provenance"]["backend"] == "stub"
 
 

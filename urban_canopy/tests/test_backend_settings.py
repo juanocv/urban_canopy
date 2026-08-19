@@ -100,11 +100,6 @@ def test_backend_specific_files_are_validated_before_construction(tmp_path):
     assert called is False
 
 
-def test_detectron_configuration_requires_a_complete_file_pair(tmp_path):
-    with pytest.raises(ValidationError, match="configured together"):
-        BackendSettings(_env_file=None, backend="detectron2", d2_config=tmp_path / "a.yml")
-
-
 def test_backend_and_device_literals_are_enforced_at_runtime():
     with pytest.raises(ValidationError):
         BackendSettings(_env_file=None, backend="unknown")

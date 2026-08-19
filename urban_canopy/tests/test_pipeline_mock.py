@@ -20,7 +20,6 @@ class StubSegmenter:
     backend_name = "stub"
     class_space = "ade20k"
     taxonomy = ADE20K
-    supports_tree_instances = False
 
     def segment(self, img_rgb):
         height, width = img_rgb.shape[:2]
@@ -33,7 +32,6 @@ class StubSegmenter:
             class_space=self.class_space,
             taxonomy=self.taxonomy,
             group_masks={"tree": tree, "grass": grass, "plant_shrub": np.zeros_like(tree)},
-            supports_tree_instances=False,
         )
 
 
@@ -43,7 +41,6 @@ class NoTreeClassSegmenter:
     backend_name = "stub-cityscapes"
     class_space = "cityscapes"
     taxonomy = CITYSCAPES
-    supports_tree_instances = False
 
     def segment(self, img_rgb):
         height, width = img_rgb.shape[:2]
@@ -54,7 +51,6 @@ class NoTreeClassSegmenter:
             class_space=self.class_space,
             taxonomy=self.taxonomy,
             group_masks={"vegetation": veg, "terrain": np.zeros_like(veg)},
-            supports_tree_instances=False,
         )
 
 
@@ -72,7 +68,6 @@ def test_single_view_local_image(tmp_path):
     assert result.coverage.tree_source == "tree_class"
     assert result.capture.source == "local"
     assert result.raw_mask.shape == (80, 120)
-    assert result.instances is None  # auto mode, backend has none
 
 
 def test_analyse_rgb_array_preserves_channel_order():
@@ -119,16 +114,6 @@ def test_unavailable_tree_class_exports_no_semantic_mask(tmp_path):
     assert record["mask"] is None
 
 
-def test_unavailable_tree_class_cannot_produce_heuristic_instances(tmp_path):
-    pipe = CanopyPipeline(
-        segmenter=NoTreeClassSegmenter(),
-        config=CanopyConfig(instance_mode="heuristic"),
-    )
-    result = pipe.analyse_image(_image(tmp_path))
-    assert result.instances is None
-    assert result.instance_source is None
-
-
 def test_no_tree_class_with_proxy_is_flagged_differently(tmp_path):
     pipe = CanopyPipeline(
         segmenter=NoTreeClassSegmenter(),
@@ -148,39 +133,6 @@ def test_refinement_disabled_keeps_raw_mask(tmp_path):
     result = pipe.analyse_image(_image(tmp_path))
     assert (result.raw_mask == result.refined_mask).all()
     assert QualityFlag.REFINEMENT_DISABLED in result.quality_flags
-
-
-def test_heuristic_instances_are_flagged(tmp_path):
-    pipe = CanopyPipeline(
-        segmenter=StubSegmenter(),
-        config=CanopyConfig(instance_mode="heuristic"),
-    )
-    result = pipe.analyse_image(_image(tmp_path))
-    assert result.instances is not None
-    assert len(result.instances) == 1  # one connected quadrant
-    assert result.instance_source == "connected_components_heuristic"
-    assert QualityFlag.HEURISTIC_INSTANCES in result.quality_flags
-    # The backend still reports that it cannot do real instances.
-    assert result.instances_supported is False
-
-
-def test_omitting_instances_from_export_also_omits_their_source(tmp_path):
-    from urban_canopy.evaluation.predictions import build_predictions
-
-    pipe = CanopyPipeline(
-        segmenter=StubSegmenter(),
-        config=CanopyConfig(instance_mode="heuristic"),
-    )
-    result = pipe.analyse_image(_image(tmp_path))
-    record = build_predictions([result], include_instances=False)["images"][0]
-    assert record["instances"] is None
-    assert record["instance_source"] is None
-
-
-def test_instance_mode_none(tmp_path):
-    pipe = CanopyPipeline(segmenter=StubSegmenter(), config=CanopyConfig(instance_mode="none"))
-    result = pipe.analyse_image(_image(tmp_path))
-    assert result.instances is None
 
 
 def test_complete_frame_is_the_coverage_denominator(tmp_path):

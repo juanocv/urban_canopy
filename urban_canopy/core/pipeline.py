@@ -22,7 +22,6 @@ import numpy as np
 from urban_canopy.io.image_io import decode_rgb, ensure_rgb_u8
 from urban_canopy.io.streetview import ImageRequest, StreetViewClient
 from urban_canopy.log import get_logger
-from urban_canopy.models.base import HEURISTIC_INSTANCES, MODEL_INSTANCES
 from urban_canopy.processing.aggregate import aggregate_views
 from urban_canopy.processing.coverage import (
     TREE_SOURCE_PROXY,
@@ -30,7 +29,6 @@ from urban_canopy.processing.coverage import (
     compute_coverage,
     resolve_tree_mask,
 )
-from urban_canopy.processing.instances import instances_from_components
 from urban_canopy.processing.refinement import refine_canopy_mask
 
 from .config import CanopyConfig
@@ -340,12 +338,6 @@ class CanopyPipeline:
         if coverage.tree_coverage_ratio is not None and coverage.tree_coverage_ratio > 0.90:
             flags.append(QualityFlag.NEAR_TOTAL_COVERAGE)
 
-        instances, instance_source = self._resolve_instances(
-            output, refined, tree_mask_available=tree_raw is not None
-        )
-        if instance_source == HEURISTIC_INSTANCES:
-            flags.append(QualityFlag.HEURISTIC_INSTANCES)
-
         return ViewResult(
             coverage=coverage,
             capture=capture,
@@ -356,32 +348,9 @@ class CanopyPipeline:
             refinement=refinement,
             vegetation_mask=None if vegetation is None else vegetation.astype(np.uint8),
             rgb_image=rgb if config.keep_rgb else None,
-            instances=instances,
-            instances_supported=bool(output.supports_tree_instances),
-            instance_source=instance_source,
             quality_flags=tuple(dict.fromkeys(flags)),
             backend_notes=tuple(output.notes),
         )
-
-    def _resolve_instances(self, output, refined_mask: np.ndarray, *, tree_mask_available: bool):
-        mode = self.config.instance_mode
-        if mode == "none" or not tree_mask_available:
-            return None, None
-
-        if output.supports_tree_instances and output.instances is not None:
-            return list(output.instances), MODEL_INSTANCES
-
-        if mode == "heuristic":
-            return (
-                instances_from_components(
-                    refined_mask, min_area_px=self.config.heuristic_min_area_px
-                ),
-                HEURISTIC_INSTANCES,
-            )
-
-        # mode == "auto" and the backend cannot individualise trees: report
-        # nothing rather than something that looks like a count.
-        return None, None
 
     def _require_streetview(self) -> StreetViewClient:
         if self.sv is None:

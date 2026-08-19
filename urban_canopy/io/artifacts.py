@@ -42,12 +42,7 @@ import cv2
 import numpy as np
 
 from urban_canopy.io.atomic import atomic_write_bytes, atomic_write_text
-from urban_canopy.io.image_io import (
-    TREE_COLOR_BGR,
-    VEGETATION_COLOR_BGR,
-    instances_overlay_bgr,
-    mask_overlay_bgr,
-)
+from urban_canopy.io.image_io import TREE_COLOR_BGR, VEGETATION_COLOR_BGR, mask_overlay_bgr
 from urban_canopy.io.json_io import json_dumps
 from urban_canopy.log import get_logger
 
@@ -140,7 +135,6 @@ class ArtifactConfig:
     save_refined_mask: bool = True
     save_overlay: bool = True
     save_vegetation_overlay: bool = False
-    save_instances: bool = True
     save_metrics_json: bool = True
 
 
@@ -229,11 +223,6 @@ def write_view_artifacts(
             mask_overlay_bgr(rgb, result.vegetation_mask, color=VEGETATION_COLOR_BGR),
         )
         written["overlay_vegetation"] = str(path)
-
-    if config.save_instances and rgb is not None and result.instances:
-        path = target / "instances.png"
-        _write_image(path, instances_overlay_bgr(rgb, result.instances))
-        written["instances"] = str(path)
 
     if config.save_metrics_json:
         path = target / "metrics.json"

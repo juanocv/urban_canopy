@@ -2,8 +2,8 @@
 The evaluation runner: predictions file + COCO annotations -> full report.
 
 Joins the two inputs on image name -- the annotation side resolves Roboflow's
-``extra.name`` back to the original filename first -- evaluates the three levels
-(pixels, instances, coverage indicator), and returns one JSON-ready document.
+``extra.name`` back to the original filename first -- evaluates both levels
+(pixels and coverage indicator), and returns one JSON-ready document.
 Images present in only one of the two inputs are listed, not silently dropped:
 a join that quietly shrinks is the classic way an evaluation flatters itself.
 """
@@ -16,11 +16,9 @@ from pathlib import Path
 from typing import Any
 
 from urban_canopy.log import get_logger
-from urban_canopy.validation import validate_probability
 
 from .coco import CocoDataset
 from .coverage_error import evaluate_coverage
-from .instance_metrics import DEFAULT_IOU_THRESHOLD, evaluate_instances
 from .predictions import PredictionsFile
 from .semantic import evaluate_semantic
 
@@ -130,9 +128,6 @@ class EvaluationReport:
 
     semantic: dict[str, Any]
     coverage: dict[str, Any] | None
-    instances: dict[str, Any] | None
-    instances_skipped_reason: str | None
-    instance_eligibility: dict[str, Any]
     n_matched_images: int
     semantic_skipped_images: dict[str, str] = field(default_factory=dict)
     unmatched_predictions: list[str] = field(default_factory=list)
@@ -142,7 +137,7 @@ class EvaluationReport:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema": "urban_canopy/evaluation/2",
+            "schema": "urban_canopy/evaluation/3",
             "settings": self.settings,
             "n_matched_images": self.n_matched_images,
             "semantic_skipped_images": self.semantic_skipped_images,
@@ -150,9 +145,6 @@ class EvaluationReport:
             "unmatched_annotations": self.unmatched_annotations,
             "semantic": self.semantic,
             "coverage": self.coverage,
-            "instances": self.instances,
-            "instances_skipped_reason": self.instances_skipped_reason,
-            "instance_eligibility": self.instance_eligibility,
             "manifest": self.manifest,
         }
 
@@ -161,18 +153,9 @@ def evaluate(
     predictions: PredictionsFile,
     dataset: CocoDataset,
     *,
-    iou_threshold: float = DEFAULT_IOU_THRESHOLD,
     keep_per_image: bool = True,
 ) -> EvaluationReport:
-    """
-    Run all three evaluation levels over the images both inputs share.
-
-    Instance metrics run only over predictions that actually carry instances;
-    when none do, that level is skipped with the reason recorded, never
-    silently reported as zero.
-    """
-    iou_threshold = validate_probability(iou_threshold, name="iou_threshold")
-
+    """Run both evaluation levels over the images the two inputs share."""
     # Evaluation is a publication boundary: warnings are insufficient when a
     # malformed dataset would change the ground truth or the join cardinality.
     dataset.validate(strict=True)
@@ -205,8 +188,6 @@ def evaluate(
 
     semantic_pairs = []
     coverage_samples = []
-    instance_samples = []
-    instance_excluded: dict[str, str] = {}
     semantic_skipped: dict[str, str] = {}
 
     for name, gt_name in join.matches:
@@ -250,18 +231,6 @@ def evaluate(
             gt_pct = 100.0 * coverage_from_mask(gt_mask)
             coverage_samples.append((name, float(record.tree_coverage_pct), gt_pct))
 
-        if record.instances is not None:
-            instance_samples.append(
-                (
-                    name,
-                    record.instance_masks(),
-                    record.instance_scores(),
-                    dataset.instance_masks(image.id),
-                )
-            )
-        else:
-            instance_excluded[name] = "instances_unavailable"
-
     semantic_report = evaluate_semantic(semantic_pairs)
 
     coverage_report = None
@@ -270,52 +239,19 @@ def evaluate(
             coverage_samples, keep_per_image=keep_per_image
         ).to_dict()
 
-    instances_report = None
-    skipped_reason = None
-    instance_eligibility = {
-        "n_shared": len(shared),
-        "n_eligible": len(instance_samples),
-        "excluded_images": instance_excluded,
-    }
-    if instance_samples:
-        sources = {pred_by_name[n].instance_source for n, *_ in instance_samples}
-        if len(sources) != 1:
-            raise ValueError(
-                "Instance evaluation cannot mix prediction origins in one metric; "
-                f"found {sorted(str(source) for source in sources)}. Evaluate model "
-                "and connected_components_heuristic predictions separately."
-            )
-        instances_report = evaluate_instances(
-            instance_samples, iou_threshold=iou_threshold
-        ).to_dict()
-        instances_report.update(instance_eligibility)
-        instances_report["instance_source"] = next(iter(sources))
-    else:
-        skipped_reason = (
-            "No prediction carries instances. The selected backend produces "
-            "semantic/stuff masks only; instance metrics need an instance model "
-            "or the explicitly requested connected-component heuristic."
-        )
-
     semantic_dict = semantic_report.to_dict()
     if not keep_per_image:
         semantic_dict.pop("per_image", None)
-        if instances_report:
-            instances_report.pop("per_image", None)
 
     return EvaluationReport(
         semantic=semantic_dict,
         coverage=coverage_report,
-        instances=instances_report,
-        instances_skipped_reason=skipped_reason,
-        instance_eligibility=instance_eligibility,
         n_matched_images=len(shared),
         semantic_skipped_images=semantic_skipped,
         unmatched_predictions=only_pred,
         unmatched_annotations=only_gt,
         manifest=dict(predictions.manifest),
         settings={
-            "iou_threshold": iou_threshold,
             "annotations": str(dataset.path) if dataset.path else None,
             "join_key": "file basename, falling back to the name without extension",
             "joined_across_extensions": [list(pair) for pair in join.joined_across_extensions],
@@ -328,7 +264,6 @@ def evaluate_files(
     predictions_path: str | Path,
     annotations_path: str | Path,
     *,
-    iou_threshold: float = DEFAULT_IOU_THRESHOLD,
     keep_per_image: bool = True,
 ) -> EvaluationReport:
     """Convenience wrapper: load both files, validate, evaluate."""
@@ -339,6 +274,5 @@ def evaluate_files(
     return evaluate(
         load_predictions(predictions_path),
         dataset,
-        iou_threshold=iou_threshold,
         keep_per_image=keep_per_image,
     )

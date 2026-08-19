@@ -5,8 +5,7 @@ Analysis and evaluation are separate steps on purpose: inference needs a GPU, a
 model download and possibly a paid API, while evaluation needs none of those and
 gets re-run every time a threshold or a matching rule is questioned. The bridge
 between them is one self-contained JSON holding, per image, the coverage number,
-the refined tree mask as uncompressed RLE, and the instances when the backend
-produced any -- plus the run manifest, so a report can always name the model and
+the refined tree mask as uncompressed RLE -- plus the run manifest, so a report can always name the model and
 configuration behind the numbers it summarises. ``mask_status`` distinguishes a
 real empty prediction from a tree mask the backend cannot express, and from a
 mask intentionally omitted during export.
@@ -36,7 +35,7 @@ __all__ = [
     "load_predictions",
 ]
 
-PREDICTIONS_SCHEMA = "urban_canopy/predictions/2"
+PREDICTIONS_SCHEMA = "urban_canopy/predictions/3"
 
 MaskStatus = Literal["available", "unavailable", "omitted"]
 
@@ -59,8 +58,6 @@ class PredictionRecord:
     total_pixels: int
     mask_status: MaskStatus
     mask: dict[str, Any] | None = None
-    instances: list[dict[str, Any]] | None = None
-    instance_source: str | None = None
     quality_flags: list[str] = field(default_factory=list)
     backend: str | None = None
     class_space: str | None = None
@@ -144,60 +141,6 @@ class PredictionRecord:
                     f"with tree_coverage_ratio={ratio!r}."
                 )
 
-        allowed_sources = {"model", "connected_components_heuristic"}
-        if self.instances is None:
-            if self.instance_source is not None:
-                raise PredictionValidationError(
-                    f"{self.file_name!r} declares instance_source={self.instance_source!r} "
-                    "but instances are unavailable."
-                )
-        else:
-            if self.instance_source not in allowed_sources:
-                raise PredictionValidationError(
-                    f"{self.file_name!r} has instances but an invalid or missing "
-                    f"instance_source={self.instance_source!r}."
-                )
-            for index, instance in enumerate(self.instances):
-                if not isinstance(instance, dict) or "mask" not in instance:
-                    raise PredictionValidationError(
-                        f"{self.file_name!r} instance {index} needs a mask object."
-                    )
-                mask = decode_rle(instance["mask"])
-                if mask.shape != (self.height, self.width):
-                    raise PredictionValidationError(
-                        f"{self.file_name!r} instance {index} has shape {mask.shape}, "
-                        f"expected {(self.height, self.width)}."
-                    )
-                source = instance.get("source", self.instance_source)
-                if source != self.instance_source:
-                    raise PredictionValidationError(
-                        f"{self.file_name!r} instance {index} declares source={source!r}, "
-                        f"different from record source={self.instance_source!r}."
-                    )
-                score = instance.get("score")
-                if score is not None:
-                    if isinstance(score, (bool, np.bool_)) or not isinstance(
-                        score, (int, float, np.integer, np.floating)
-                    ):
-                        raise PredictionValidationError(
-                            f"{self.file_name!r} instance {index} has a non-numeric "
-                            f"score={score!r}."
-                        )
-                    numeric_score = float(score)
-                    if not np.isfinite(numeric_score) or not 0.0 <= numeric_score <= 1.0:
-                        raise PredictionValidationError(
-                            f"{self.file_name!r} instance {index} has invalid " f"score={score!r}."
-                        )
-
-    def instance_masks(self) -> list[np.ndarray]:
-        return [decode_rle(inst["mask"]) for inst in (self.instances or [])]
-
-    def instance_scores(self) -> list[float | None]:
-        return [
-            None if inst.get("score") is None else float(inst["score"])
-            for inst in (self.instances or [])
-        ]
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "file_name": self.file_name,
@@ -210,8 +153,6 @@ class PredictionRecord:
             "total_pixels": self.total_pixels,
             "mask_status": self.mask_status,
             "mask": self.mask,
-            "instances": self.instances,
-            "instance_source": self.instance_source,
             "quality_flags": list(self.quality_flags),
             "backend": self.backend,
             "class_space": self.class_space,
@@ -230,8 +171,6 @@ class PredictionRecord:
             total_pixels=int(data.get("total_pixels", 0)),
             mask_status=cast(MaskStatus, str(data["mask_status"])),
             mask=data.get("mask"),
-            instances=data.get("instances"),
-            instance_source=data.get("instance_source"),
             quality_flags=list(data.get("quality_flags", [])),
             backend=data.get("backend"),
             class_space=data.get("class_space"),
@@ -263,22 +202,10 @@ class PredictionsFile:
         return index
 
 
-def _record_from_result(result, *, include_mask: bool, include_instances: bool) -> PredictionRecord:
+def _record_from_result(result, *, include_mask: bool) -> PredictionRecord:
     capture = result.capture
     coverage = result.coverage
     height, width = np.asarray(result.refined_mask).shape[:2]
-
-    instances = None
-    if include_instances and result.instances is not None:
-        instances = [
-            {
-                "label": inst.label,
-                "score": None if inst.score is None else float(inst.score),
-                "source": inst.source,
-                "mask": encode_rle(inst.mask),
-            }
-            for inst in result.instances
-        ]
 
     file_name = capture.image_path or ""
     tree_available = coverage.tree_source != "unavailable"
@@ -303,8 +230,6 @@ def _record_from_result(result, *, include_mask: bool, include_instances: bool) 
         total_pixels=coverage.total_pixels,
         mask_status=mask_status,
         mask=mask,
-        instances=instances,
-        instance_source=result.instance_source if instances is not None else None,
         quality_flags=list(result.quality_flags),
         backend=result.backend,
         class_space=result.class_space,
@@ -316,14 +241,11 @@ def build_predictions(
     *,
     manifest: dict[str, Any] | None = None,
     include_masks: bool = True,
-    include_instances: bool = True,
 ) -> dict[str, Any]:
     """Assemble the predictions document from a list of ``ViewResult``."""
     records = []
     for result in results:
-        record = _record_from_result(
-            result, include_mask=include_masks, include_instances=include_instances
-        )
+        record = _record_from_result(result, include_mask=include_masks)
         record.validate()
         records.append(record)
 
@@ -345,11 +267,19 @@ def load_predictions(path: str | Path) -> PredictionsFile:
 
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     schema = str(data.get("schema", ""))
-    if schema == "urban_canopy/predictions/1":
+    legacy = {
+        "urban_canopy/predictions/1": (
+            "could exclude part of the Street View frame from its denominator"
+        ),
+        "urban_canopy/predictions/2": (
+            "carried per-instance predictions, which this build no longer evaluates"
+        ),
+    }
+    if schema in legacy:
         raise ValueError(
-            f"{Path(path).name} uses the legacy predictions schema, which could "
-            "exclude part of the Street View frame from its denominator. Regenerate "
-            f"it with this build to produce {PREDICTIONS_SCHEMA!r}."
+            f"{Path(path).name} uses a legacy predictions schema, which "
+            f"{legacy[schema]}. Regenerate it with this build to produce "
+            f"{PREDICTIONS_SCHEMA!r}."
         )
     if schema != PREDICTIONS_SCHEMA:
         raise ValueError(

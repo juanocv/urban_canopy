@@ -33,8 +33,6 @@ def test_refinement_rejects_invalid_values(kwargs):
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"instance_mode": "invented"},
-        {"heuristic_min_area_px": -1},
         {"seed": -1},
         {"seed": 2**32},
         {"keep_rgb": 1},

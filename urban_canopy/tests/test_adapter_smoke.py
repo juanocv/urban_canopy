@@ -111,7 +111,6 @@ def test_huggingface_adapter_smoke_without_real_weights(
     np.testing.assert_array_equal(
         output.group_masks["tree"], [[True, True, False], [False, True, False]]
     )
-    assert output.instances is None
     assert adapter.model.evaluated is True
 
 
@@ -172,7 +171,6 @@ def test_detectron2_panoptic_adapter_smoke_without_detectron2(monkeypatch):
     output.validate((2, 3))
     np.testing.assert_array_equal(adapter.predictor.received, rgb[:, :, ::-1])
     assert output.group_masks["tree"].sum() == 3
-    assert output.instances is None
 
 
 def test_deeplab_adapter_smoke_without_torchvision(monkeypatch):

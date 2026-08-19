@@ -43,7 +43,6 @@ class QualityFlag:
     TREE_FROM_PROXY = "tree_from_vegetation_proxy"
     REFINEMENT_DISABLED = "refinement_disabled"
     GROWTH_GUARD = "refinement_growth_guard_triggered"
-    HEURISTIC_INSTANCES = "instances_are_heuristic"
     NEAR_TOTAL_COVERAGE = "coverage_above_90pct"
 
 
@@ -128,16 +127,9 @@ class ViewResult:
     refinement: RefinementStats
     vegetation_mask: np.ndarray | None = None
     rgb_image: np.ndarray | None = None
-    instances: list | None = None
-    instances_supported: bool = False
-    instance_source: str | None = None
     quality_flags: tuple[str, ...] = field(default_factory=tuple)
     backend_notes: tuple[str, ...] = field(default_factory=tuple)
     artifacts: dict[str, str] = field(default_factory=dict)
-
-    @property
-    def instance_count(self) -> int | None:
-        return None if self.instances is None else len(self.instances)
 
     def to_dict(self, *, include_artifacts: bool = True) -> dict[str, Any]:
         """JSON-safe view of the result; arrays stay out of it by design."""
@@ -147,11 +139,6 @@ class ViewResult:
             "capture": self.capture.to_dict(),
             "coverage": self.coverage.to_dict(),
             "refinement": self.refinement.to_dict(),
-            "instances": {
-                "count": self.instance_count,
-                "supported": self.instances_supported,
-                "source": self.instance_source,
-            },
             "quality_flags": list(self.quality_flags),
             "backend_notes": list(self.backend_notes),
         }
@@ -209,8 +196,6 @@ def results_to_rows(results: Sequence[ViewResult]) -> list[dict[str, Any]]:
                 "vegetation_coverage_pct": coverage.vegetation_coverage_pct,
                 "valid_pixels": coverage.valid_pixels,
                 "total_pixels": coverage.total_pixels,
-                "instance_count": result.instance_count,
-                "instance_source": result.instance_source or "",
                 "refinement_enabled": result.refinement.enabled,
                 "quality_flags": "|".join(result.quality_flags),
             }

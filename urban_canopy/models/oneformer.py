@@ -11,9 +11,9 @@ rather than assumed:
   and every tree in a frame collapses into one segment. The 100-class ADE20K
   instance set contains ``palm`` and ``flower`` but **not** ``tree``.
 
-Consequence, and the reason this adapter never fills ``instances``: OneFormer on
-ADE20K is a sound baseline for *visible canopy coverage* and cannot support any
-claim about the number of individual trees detected. The panoptic task is still
+Consequence: OneFormer on ADE20K is a sound baseline for *visible canopy
+coverage* and cannot support any claim about the number of individual trees
+detected -- which is why this project measures coverage only. The panoptic task is still
 available because its segment list is useful for auditing, but the default is
 the semantic task -- panoptic post-processing applies confidence and overlap
 thresholds that silently drop pixels, and a coverage ratio should not depend on
@@ -49,8 +49,6 @@ class_space_for_model = infer_class_space
 
 class OneFormerSegmenter:
     """Vegetation segmentation through OneFormer."""
-
-    supports_tree_instances = False
 
     def __init__(
         self,
@@ -135,8 +133,6 @@ class OneFormerSegmenter:
             group_masks=group_masks,
             label_map=label_map,
             segments=segments,
-            instances=None,
-            supports_tree_instances=False,
             notes=tuple(notes),
         )
 
@@ -172,9 +168,9 @@ class OneFormerSegmenter:
             class_id = raw.get("label_id", raw.get("category_id"))
             name = self._id2label.get(int(class_id), str(class_id))
             segment_id = int(raw["id"])
-            # transformers' panoptic post-processing does not report isthing, and
-            # this adapter never emits instances anyway, so segments are recorded
-            # as stuff rather than guessed at.
+            # transformers' panoptic post-processing does not report isthing, so
+            # segments are recorded as stuff rather than guessed at; nothing
+            # downstream distinguishes them.
             segments.append(
                 Segment(
                     id=segment_id,

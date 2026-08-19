@@ -3,7 +3,7 @@ DeepLabV3+ adapter (VainF's Cityscapes checkpoints).
 
 Class-space audit: Cityscapes-19 has **no tree class**. ``vegetation`` (trainId
 8) merges trees with bushes and hedges, and ``terrain`` (9) merges grass with
-soil and sand. Output is semantic only -- no panoptic map, no instances.
+soil and sand. Output is semantic only -- no panoptic map.
 
 So this backend cannot answer "how much of the frame is tree". It answers "how
 much is woody vegetation", which is a different and wider quantity. The adapter
@@ -66,8 +66,6 @@ CITYSCAPES_LABELS = {
 
 class DeepLabSegmenter:
     """Semantic vegetation segmentation through a loaded DeepLab model."""
-
-    supports_tree_instances = False
 
     def __init__(
         self,
@@ -152,8 +150,6 @@ class DeepLabSegmenter:
             group_masks=build_group_masks(self.taxonomy, labelled, (height, width)),
             label_map=pred,
             segments=segments,
-            instances=None,
-            supports_tree_instances=False,
             notes=(
                 "Cityscapes has no tree class: 'vegetation' merges trees with bushes "
                 "and hedges. Tree coverage is unavailable unless the vegetation proxy "

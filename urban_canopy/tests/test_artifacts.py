@@ -26,16 +26,13 @@ from urban_canopy.processing.refinement import RefinementStats
 class _Result:
     """Minimal stand-in for ViewResult, enough for the artifact writer."""
 
-    def __init__(self, capture, *, instances=None, shape=(20, 30)):
+    def __init__(self, capture, *, shape=(20, 30)):
         self.capture = capture
         self.raw_mask = np.zeros(shape, np.uint8)
         self.raw_mask[2:8, 2:8] = 1
         self.refined_mask = self.raw_mask.copy()
         self.vegetation_mask = None
         self.rgb_image = np.zeros((*shape, 3), np.uint8)
-        self.instances = instances
-        self.instances_supported = False
-        self.instance_source = None
         self.quality_flags = ()
         self.backend = "stub"
         self.class_space = "ade20k"
@@ -50,10 +47,6 @@ class _Result:
             tree_coverage_pct=6.0,
             tree_source=TREE_SOURCE_CLASS,
         )
-
-    @property
-    def instance_count(self):
-        return None if self.instances is None else len(self.instances)
 
     def to_dict(self, *, include_artifacts=True):
         return {"backend": self.backend, "coverage": self.coverage.to_dict()}
@@ -191,7 +184,6 @@ def test_failed_image_encoding_is_reported_and_not_recorded(tmp_path, monkeypatc
         save_rgb=False,
         save_refined_mask=False,
         save_overlay=False,
-        save_instances=False,
         save_metrics_json=False,
     )
     with pytest.raises(RuntimeError, match="failed to encode"):

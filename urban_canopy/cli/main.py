@@ -40,8 +40,6 @@ def _print_view(result, *, prefix: str = "") -> None:
     )
     if coverage.vegetation_coverage_pct is not None:
         print(f"{prefix}  vegetation coverage: {_fmt_pct(coverage.vegetation_coverage_pct)}")
-    if result.instance_count is not None:
-        print(f"{prefix}  instances: {result.instance_count}" f" (source={result.instance_source})")
     if result.quality_flags:
         print(f"{prefix}  flags: {', '.join(result.quality_flags)}")
 
@@ -55,9 +53,6 @@ def _print_aggregate(aggregate) -> None:
         print(f"  median = {100 * stats.median:.2f}%")
         print(f"  p25    = {100 * stats.p25:.2f}%   p75 = {100 * stats.p75:.2f}%")
         print(f"  IQR    = {100 * stats.iqr:.2f} pp")
-    counts = [c for c in aggregate.instance_counts if c is not None]
-    if counts:
-        print(f"  instances per view: {counts} (per view only; never summed across views)")
     for note in aggregate.notes:
         print(f"  note: {note}")
 
@@ -267,7 +262,6 @@ def _run_evaluate(args) -> int:
     report = evaluate_files(
         args.predictions,
         args.annotations,
-        iou_threshold=args.iou_threshold,
         keep_per_image=not args.no_per_image,
     )
     payload = report.to_dict()
@@ -288,22 +282,6 @@ def _run_evaluate(args) -> int:
         print(f"  bias = {cov['bias_pp']:+.2f} pp")
         if cov.get("pearson_r") is not None:
             print(f"  Pearson r = {cov['pearson_r']:.3f} (complementary; not an error metric)")
-
-    if payload["instances"] is not None:
-        inst = payload["instances"]
-        print(f"\nINSTANCES (IoU >= {inst['iou_threshold']:.2f}, ranked by {inst['ranked_by']}):")
-        print(f"  TP={inst['tp']}  FP={inst['fp']}  FN={inst['fn']}")
-        print(f"  precision = {inst['precision']:.4f}")
-        print(f"  recall    = {inst['recall']:.4f}")
-        print(f"  F1        = {inst['f1']:.4f}")
-        print(f"  mean matched IoU = {inst['mean_matched_iou']:.4f}")
-        if inst.get("AP50") is not None:
-            print(f"  AP50    = {inst['AP50']:.4f}")
-            print(f"  AP50:95 = {inst['AP50:95']:.4f}")
-        elif inst.get("ap_unavailable_reason"):
-            print(f"  AP: unavailable -- {inst['ap_unavailable_reason']}")
-    elif payload["instances_skipped_reason"]:
-        print(f"\nINSTANCES: skipped -- {payload['instances_skipped_reason']}")
 
     if args.report_json:
         write_json(payload, args.report_json)

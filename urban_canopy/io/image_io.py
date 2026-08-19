@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import base64
-import hashlib
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 
 import cv2
@@ -21,7 +20,6 @@ __all__ = [
     "from_bgr_array",
     "read_rgb",
     "mask_overlay_bgr",
-    "instances_overlay_bgr",
     "png_b64",
 ]
 
@@ -117,47 +115,6 @@ def mask_overlay_bgr(
             m.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
         cv2.drawContours(out, contours, -1, tuple(int(c) for c in color), 1)
-    return out
-
-
-def _color_for_index(index: int) -> tuple[int, int, int]:
-    # blake2b rather than hash(): str/int hashing is salted per process
-    # (PYTHONHASHSEED), which would recolour the same instance on every run.
-    digest = hashlib.blake2b(str(index).encode("utf-8"), digest_size=3).digest()
-    return tuple(50 + int(b) % 206 for b in digest)  # type: ignore[return-value]
-
-
-def instances_overlay_bgr(rgb: np.ndarray, instances: Iterable) -> np.ndarray:
-    """
-    Draw one colour per instance mask, with an index label at its centroid.
-
-    Instances are only ever drawn when a backend actually produced them, or
-    when the connected-component heuristic was explicitly requested; the caller
-    decides, this function just renders whatever list it is handed.
-    """
-    bgr = cv2.cvtColor(ensure_rgb_u8(rgb), cv2.COLOR_RGB2BGR)
-    out = bgr.copy()
-    for index, inst in enumerate(instances):
-        mask = np.asarray(getattr(inst, "mask", inst)).astype(bool)
-        if mask.shape != out.shape[:2] or not mask.any():
-            continue
-        color = _color_for_index(index)
-        out[mask] = (0.55 * out[mask] + 0.45 * np.asarray(color)).astype(np.uint8)
-        contours, _ = cv2.findContours(
-            mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-        cv2.drawContours(out, contours, -1, color, 2)
-        ys, xs = np.nonzero(mask)
-        cv2.putText(
-            out,
-            str(index),
-            (int(xs.mean()), int(ys.mean())),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (255, 255, 255),
-            1,
-            cv2.LINE_AA,
-        )
     return out
 
 

@@ -4,10 +4,13 @@ The common contract every segmentation backend fulfils.
 This replaces the sidewalk project's four-tuple return
 ``(mask, seg_map, seg_info, obstacles)``, which encoded one target class and one
 downstream consumer. A canopy backend has to say more than "here is the mask":
-it must report which class space it speaks, which vegetation groups it could
-separate, and -- crucially -- whether the instances it returns are real model
-instances or nothing at all. ``SegmentationOutput`` carries all of that, so no
-consumer has to guess.
+it must report which class space it speaks and which vegetation groups it could
+separate, so no consumer has to guess.
+
+The contract is deliberately semantic-only. Individual trees are not part of it:
+no published checkpoint for any class space this project supports carries tree as
+a *thing* class, so a backend could never honestly fill such a field. See
+``docs/evaluation.md``.
 """
 
 from __future__ import annotations
@@ -22,19 +25,9 @@ from .taxonomy import Taxonomy
 
 __all__ = [
     "Segment",
-    "InstanceMask",
     "SegmentationOutput",
     "Segmenter",
-    "MODEL_INSTANCES",
-    "HEURISTIC_INSTANCES",
 ]
-
-#: ``InstanceMask.source`` for masks a model emitted as separate instances.
-MODEL_INSTANCES = "model"
-#: ``InstanceMask.source`` for masks derived by splitting a semantic mask into
-#: connected components. This is a heuristic, not instance segmentation; see
-#: :mod:`urban_canopy.processing.instances`.
-HEURISTIC_INSTANCES = "connected_components_heuristic"
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,26 +38,6 @@ class Segment:
     label: str
     is_thing: bool = False
     score: float | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class InstanceMask:
-    """
-    One candidate tree instance.
-
-    ``source`` is not decoration: every metric computed from these masks is
-    reported alongside it, because a connected component of a stuff mask and a
-    predicted instance are different claims about the world.
-    """
-
-    label: str
-    mask: np.ndarray  # H x W bool
-    score: float | None = None
-    source: str = MODEL_INSTANCES
-
-    @property
-    def area(self) -> int:
-        return int(np.count_nonzero(self.mask))
 
 
 @dataclass(slots=True)
@@ -80,10 +53,6 @@ class SegmentationOutput:
     #: Per-pixel segment/class id map, kept for auditing and debug overlays.
     label_map: np.ndarray | None = None
     segments: list[Segment] | None = None
-    #: Real per-tree instances, or None when the backend cannot produce them.
-    instances: list[InstanceMask] | None = None
-    #: True only when the backend genuinely separates individual trees.
-    supports_tree_instances: bool = False
     #: Free-form provenance notes surfaced in results and logs.
     notes: tuple[str, ...] = field(default_factory=tuple)
 
@@ -126,30 +95,6 @@ class SegmentationOutput:
                     f"Segmentation label_map has shape {label_map.shape}, expected {shape}."
                 )
 
-        if self.instances is not None and not self.supports_tree_instances:
-            raise ValueError(
-                "Segmentation output carries instances but declares that tree instances "
-                "are unsupported."
-            )
-        if self.supports_tree_instances and self.instances is None:
-            raise ValueError(
-                "A backend that supports tree instances must return an empty list when "
-                "there are no detections, not None."
-            )
-        if self.supports_tree_instances and self.taxonomy.tree_group is None:
-            raise ValueError(
-                "A backend cannot support tree instances when its taxonomy has no " "tree group."
-            )
-        for index, instance in enumerate(self.instances or []):
-            mask = np.asarray(instance.mask)
-            if mask.ndim != 2 or mask.shape != shape:
-                raise ValueError(f"Tree instance {index} has shape {mask.shape}, expected {shape}.")
-            if self.taxonomy.group_for_label(instance.label) != self.taxonomy.tree_group:
-                raise ValueError(
-                    f"Tree instance {index} has label {instance.label!r}, which the "
-                    "taxonomy does not map to its tree group."
-                )
-
     def union(self, names: Iterable[str]) -> np.ndarray | None:
         """Union of several group masks; None when none of them exist."""
         masks = [self.group_masks[n] for n in names if n in self.group_masks]
@@ -181,7 +126,6 @@ class Segmenter(Protocol):
     backend_name: str
     class_space: str
     taxonomy: Taxonomy
-    supports_tree_instances: bool
 
     def segment(self, img_rgb: np.ndarray) -> SegmentationOutput: ...
 

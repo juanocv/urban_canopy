@@ -3,17 +3,18 @@ Ground-truth loading: COCO Instance Segmentation.
 
 The annotation format is fixed by how the labels are produced -- each image is
 labelled in Roboflow and exported as COCO Instance Segmentation, one mask per
-tree. This module reads that export, checks it, and exposes it two ways, because
-the project evaluates two different things from the same file:
+tree. This module reads that export, checks it, and turns it into the one thing
+evaluation needs:
 
-* ``instance_masks(image_id)`` -- one mask per annotated tree, for the instance
-  metrics;
-* ``semantic_mask(image_id)`` -- the union of those masks, for the pixel metrics
-  and for the ground-truth coverage ratio.
+* ``instance_masks(image_id)`` -- one mask per annotated tree, the raw form the
+  annotation tool produces;
+* ``semantic_mask(image_id)`` -- their union, which is the ground truth every
+  metric in this project is measured against.
 
-Deriving the semantic mask from the instances rather than annotating it twice is
-deliberate: two separately drawn ground truths would disagree, and then no one
-could say which of the two the pixel metrics were measured against.
+Per-tree annotation is kept even though nothing scores individual trees: it is
+what Roboflow produces naturally, and deriving the semantic mask from it beats
+annotating the same pixels twice, since two separately drawn ground truths would
+disagree and no one could say which the metrics were measured against.
 
 Polygon, uncompressed-RLE and compressed-RLE segmentations are all decoded here
 with no external dependency (see :mod:`urban_canopy.evaluation.rle`), so a
@@ -250,7 +251,7 @@ class CocoDataset:
                 if ann.iscrowd:
                     problems.append(
                         f"Annotation {ann.id} is marked iscrowd; crowd regions have no "
-                        "individual instance and are excluded from instance matching."
+                        "individual instance and are excluded from the ground-truth mask."
                     )
                 try:
                     ann.to_mask(image.height, image.width)

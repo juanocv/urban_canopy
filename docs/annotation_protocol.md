@@ -1,8 +1,16 @@
 # Annotation Protocol
 
 Ground truth is produced manually in Roboflow and exported as **COCO Instance
-Segmentation**, one annotation per individual tree. Polygon, uncompressed RLE
-and compressed COCO RLE segmentations are all accepted.
+Segmentation**, one annotation per individual tree.
+
+Nothing scores individual trees — the pipeline measures area, not counts — but
+the per-tree form is kept because it is what Roboflow produces, and because the
+pixel-level ground truth is the **union** of those annotations. Drawing one
+merged mask instead would be a second, separately drawn ground truth that could
+disagree with this one.
+
+Polygon, uncompressed RLE and compressed COCO RLE segmentations are all
+accepted.
 
 Roboflow replaces `file_name` with an export-specific hashed name and keeps the
 original under `images[].extra.name`. The evaluator joins on the original name

@@ -129,9 +129,7 @@ def _add_backend_arguments(parser: argparse.ArgumentParser) -> None:
         "class space has no tree class (DeepLab/Cityscapes). Results are "
         "flagged tree_from_vegetation_proxy.",
     )
-    # Detectron2 custom instance model
-    parser.add_argument("--d2-config", type=Path, help="Detectron2 config .yaml (instance mode)")
-    parser.add_argument("--d2-weights", type=Path, help="Detectron2 weights .pth (instance mode)")
+    # Detectron2
     parser.add_argument(
         "--d2-score-thresh",
         type=probability_arg,
@@ -207,15 +205,6 @@ def _add_processing_arguments(parser: argparse.ArgumentParser) -> None:
         type=kernel_arg,
         default=0,
         help="Refinement: morphological closing kernel in px (0 = off, default)",
-    )
-    parser.add_argument(
-        "--instances",
-        default="auto",
-        choices=["auto", "none", "heuristic"],
-        help="Instance reporting. 'auto' (default) keeps model instances when the "
-        "backend produces them and nothing otherwise; 'heuristic' splits the "
-        "semantic mask into connected components and FLAGS them as a heuristic, "
-        "not a tree count.",
     )
     parser.add_argument(
         "--seed", type=seed_arg, default=0, help="Random seed recorded in the manifest"
@@ -374,7 +363,7 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate = subparsers.add_parser(
         "evaluate",
         help="Evaluate a predictions file against COCO ground truth",
-        description="Semantic, instance and coverage-error evaluation against a "
+        description="Semantic and coverage-error evaluation against a "
         "COCO Instance Segmentation export (e.g. from Roboflow).",
     )
     evaluate.add_argument(
@@ -388,12 +377,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         help="COCO instance segmentation JSON (ground truth)",
-    )
-    evaluate.add_argument(
-        "--iou-threshold",
-        type=probability_arg,
-        default=0.50,
-        help="IoU threshold for instance matching (default 0.50)",
     )
     evaluate.add_argument(
         "--report-json",

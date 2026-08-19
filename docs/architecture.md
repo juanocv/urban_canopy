@@ -15,7 +15,7 @@ view plan (single / multi-view)          ← deterministic, config-driven
         │  headings, pitch, fov
         ▼
 segmentation backend            ← OneFormer | Mask2Former | Detectron2 | DeepLab
-        │  SegmentationOutput: group masks per taxonomy, instances?, notes
+        │  SegmentationOutput: group masks per taxonomy, notes
         ▼
 tree-mask resolution                     ← tree class, or explicit vegetation proxy
         ▼
@@ -23,7 +23,7 @@ conservative refinement                  ← optional; growth-guarded
         ▼
 coverage indicators                      ← tree pixels / all image pixels
         ▼
-aggregation (multi-view)                 ← median/IQR/p25/p75; counts stay per view
+aggregation (multi-view)                 ← median/IQR/p25/p75 over coverage ratios
         ▼
 exports                                  ← artifacts, metrics JSON, CSV, predictions
 ```
@@ -46,14 +46,13 @@ ground-truth export (see `docs/evaluation.md`).
 | `io/atomic.py`, `io/json_io.py` | Atomic file replacement and strict JSON conversion |
 | `io/geo.py` | Pure geographic helpers |
 | `models/taxonomy.py` | Class-space → group mapping; tree vs vegetation kept apart |
-| `models/base.py` | `SegmentationOutput` contract, instance provenance constants |
+| `models/base.py` | `SegmentationOutput` contract and its validation |
 | `models/{oneformer,mask2former,detectron2,deeplab}.py` | Backend adapters |
 | `models/factory.py` | Lazy backend construction; optional ML imports happen at construction |
 | `processing/coverage.py` | The indicator; proxy/unavailable semantics |
 | `processing/refinement.py` | Conservative canopy cleanup with growth guard |
-| `processing/instances.py` | Connected-component heuristic, explicitly flagged |
 | `processing/aggregate.py` | Robust multi-view statistics |
-| `evaluation/*` | COCO loading, RLE, three metric levels, runner, interchange |
+| `evaluation/*` | COCO loading, RLE, two metric levels, runner, interchange |
 | `cli/`, `webapi.py` | Interfaces |
 
 ## Mapping from sidewalk_analysis
@@ -81,10 +80,10 @@ ground-truth export (see `docs/evaluation.md`).
 
 | Component | Change |
 |---|---|
-| `Segmenter` protocol (4-tuple) | → `SegmentationOutput` dataclass: taxonomy-driven group masks, honest instance support, provenance notes |
+| `Segmenter` protocol (4-tuple) | → `SegmentationOutput` dataclass: taxonomy-driven group masks, provenance notes |
 | Backend wrappers | Target decoupled from `sidewalk`; per-backend class-space audit; **no refinement inside adapters** (the parent called `shave_above_top_envelope` there; refinement is now one explicit pipeline stage) |
 | `AliasSegmenter` label synonyms | → `Taxonomy` (data, serialisable, per-study override) |
-| Multi-view aggregation (median width) | → robust stats over coverage ratios; per-view instance counts |
+| Multi-view aggregation (median width) | → robust stats over coverage ratios |
 | Debug artifacts | → structured per-view artifact directories |
 
 ### Removed (not carried into the inference path)
@@ -119,8 +118,10 @@ being measured. Heading plans here are deterministic and blind to the imagery.
   space before importing or downloading its model. Aliases use the same
   normalization as predicted labels; duplicate group names and ambiguous
   aliases are rejected unless `alias_priority` resolves the conflict.
-- **`InstanceMask.source`**: `model` or `connected_components_heuristic`;
-  metrics and reports carry it through.
+- **Area, never counts.** There is no per-instance output: no published
+  checkpoint for these class spaces has tree as a *thing* class, and every
+  downloadable tree instance model is overhead aerial imagery. Ground truth is
+  still annotated per tree and unioned into the semantic mask.
 - **Complete-frame denominator**: Street View frames, including attribution and
   watermark pixels, remain intact. Coverage is always divided by `H * W`.
 - **Prediction mask status**: `available`, `unavailable` (the class space has no

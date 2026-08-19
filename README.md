@@ -1,7 +1,7 @@
 # Urban Canopy
 
 Urban Canopy estimates the **visible tree-canopy coverage** of urban streets from
-Google Street View imagery, using semantic/panoptic/instance segmentation. The
+Google Street View imagery, using semantic and panoptic segmentation. The
 production package lives in `urban_canopy/`; third-party model checkouts
 (OneFormer via HuggingFace, Detectron2, DeepLab) stay outside the package
 boundary.
@@ -27,7 +27,7 @@ medium / high greenery") are produced: the continuous ratio is the output.
    (reference heading + offsets, or equiangular sampling). Heading selection is
    configuration-driven and independent of the segmentation output.
 3. **Segmentation** — OneFormer (ADE20K), Mask2Former (ADE20K, COCO or
-   Cityscapes), Detectron2 (COCO-panoptic, or a custom instance model), DeepLab
+   Cityscapes), Detectron2 (COCO-panoptic), DeepLab
    (Cityscapes), behind one common contract.
 4. **Refinement** — conservative, optional cleanup of the canopy mask (speck
    removal, small-hole filling), with a growth guard that prevents any setting
@@ -35,23 +35,21 @@ medium / high greenery") are produced: the continuous ratio is the output.
 5. **Indicators** — coverage ratios per image, with quality flags and full
    capture provenance.
 6. **Aggregation** — mean / median / IQR / p25 / p75 across the views of a
-   location. Instance counts stay per view and are never summed across views.
-7. **Evaluation** — three independent levels against manual COCO ground truth:
-   pixels (IoU, Dice/F1, precision, recall), instances (TP/FP/FN, precision,
-   recall, F1, mean matched IoU, AP50/AP50:95 when scores exist), and the
-   coverage indicator itself (MAE, RMSE, bias in percentage points).
+   location.
+7. **Evaluation** — two independent levels against manual COCO ground truth:
+   pixels (IoU, Dice/F1, precision, recall) and the coverage indicator itself
+   (MAE, RMSE, bias in percentage points).
 8. **Audit artifacts** — per view: RGB, raw mask, refined mask, overlays,
-   instance visualisation, metrics JSON; plus CSV/JSON exports per run.
+   metrics JSON; plus CSV/JSON exports per run.
 
 ### What the backends can and cannot claim
 
-| Backend | Pretraining | Tree class | Individual trees? |
-|---|---|---|---|
-| OneFormer | ADE20K-150 | `tree` (stuff) + `palm` | No — coverage only |
-| Mask2Former | ADE20K / COCO / Cityscapes | depends on the checkpoint | No — coverage only |
-| Detectron2 panoptic FPN | COCO-panoptic 133 | `tree-merged` (stuff) | No — coverage only |
-| Detectron2 Mask R-CNN (custom weights) | your fine-tune | your `tree` thing class | **Yes** — masks + scores |
-| DeepLab V3+ | Cityscapes-19 | none (`vegetation` merges trees+bushes) | No — and no tree ratio unless `--allow-vegetation-proxy` |
+| Backend | Pretraining | Tree class |
+|---|---|---|
+| OneFormer | ADE20K-150 | `tree` (stuff) + `palm` |
+| Mask2Former | ADE20K / COCO / Cityscapes | depends on the checkpoint |
+| Detectron2 panoptic FPN | COCO-panoptic 133 | `tree-merged` (stuff) |
+| DeepLab V3+ | Cityscapes-19 | none (`vegetation` merges trees+bushes); no tree ratio unless `--allow-vegetation-proxy` |
 
 Mask2Former is the one backend published for **several class spaces**, so it can
 hold the architecture fixed and vary the label set — which separates "the model
@@ -71,10 +69,24 @@ That last line is the point: the same architecture reports no tree ratio when
 pointed at a class space that cannot express one, rather than quietly returning
 the vegetation number.
 
-Splitting a semantic mask into connected components is available as an
-**explicitly flagged heuristic** (`--instances heuristic`), not as instance
-segmentation: touching crowns merge, occluded crowns split, and the counts say
-so in every output.
+### Why there are no individual-tree metrics
+
+This project measures **area, never counts**. That is a finding, not a
+simplification: no published checkpoint for any class space here carries tree as
+a *thing* class. COCO-80 has only `potted plant`, COCO-panoptic's `tree-merged`
+is stuff, LVIS v1's 1203 categories contain only `Christmas_tree`, and
+Cityscapes-instance has eight person/vehicle classes. The ADE20K instance set
+(100 things) has `palm` and `flower` but not `tree`. Every downloadable tree
+instance-segmentation model — detectree2, DeepForest, `restor/tcd-mask-rcnn-r50`
+— is trained on **overhead** aerial imagery, where crowns are separated blobs;
+from the street they overlap and occlude, and the recent work that tackles that
+does not release weights.
+
+So a per-instance metric could only ever have been computed against a model that
+does not exist. Individual-tree support was removed rather than left as an
+unreachable code path. The ground truth is still annotated one tree at a time —
+that is what Roboflow produces — and those instances are unioned into the
+semantic mask everything is scored against.
 
 ## Repository layout
 
@@ -83,7 +95,7 @@ urban_canopy/              Python package used by the CLI and API
 urban_canopy/core/         Pipeline orchestration, config, results, view plans
 urban_canopy/io/           Street View, image and geospatial I/O, artifacts
 urban_canopy/models/       Backend adapters, taxonomy, factory
-urban_canopy/processing/   Coverage, refinement, aggregation, instance heuristic
+urban_canopy/processing/   Coverage, refinement, multi-view aggregation
 urban_canopy/evaluation/   COCO ground truth, metrics, prediction interchange
 urban_canopy/tests/        Offline, CPU-only unit tests
 docs/                      Architecture, annotation protocol, evaluation method
@@ -106,7 +118,7 @@ jupyter lab notebooks/
   end to end: the indicator, the tree/vegetation split, raw vs refined masks,
   and the refinement growth guard.
 - [`02_multiview_and_evaluation.ipynb`](notebooks/02_multiview_and_evaluation.ipynb)
-  — multi-view aggregation and the three evaluation levels.
+  — multi-view aggregation and the two evaluation levels.
 
 ## Setup
 
@@ -254,7 +266,7 @@ artifacts_out/
     predictions.json    for `tree-ai evaluate`
     views/
       000_street/       rgb.png  mask_raw.png  mask_refined.png
-                        overlay_tree.png  instances.png  metrics.json
+                        overlay_tree.png  metrics.json
       001_...           further views, in acquisition order
 ```
 
@@ -289,8 +301,6 @@ Knobs worth knowing:
 
 - `--no-refine` feeds the raw segmenter mask downstream (the comparison
   baseline every refinement experiment should report against).
-- `--instances heuristic` derives connected components from the semantic mask;
-  results carry the `instances_are_heuristic` flag.
 - `--allow-vegetation-proxy` lets DeepLab's `vegetation` class stand in for
   trees; results carry `tree_from_vegetation_proxy` and
   `tree_source="vegetation_proxy"`.
@@ -331,8 +341,9 @@ keep it behind a proxy or bound to localhost.
 ## Ground truth and evaluation
 
 Labelling happens in Roboflow, exported as **COCO Instance Segmentation**, one
-polygon/mask per tree. The pixel-level ground truth is the union of the
-instances, so the two levels can never disagree about what a tree pixel is.
+polygon/mask per tree. The pixel-level ground truth is their union: annotating
+per tree is what the tool produces, and unioning beats drawing the same pixels a
+second time, since two separately drawn ground truths would disagree.
 
 - Annotation policy (what counts as a tree, crowns vs trunks, occlusions,
   partial trees, minimum visibility): [`docs/annotation_protocol.md`](docs/annotation_protocol.md)
@@ -346,10 +357,6 @@ instances, so the two levels can never disagree about what a tree pixel is.
 Every prediction file embeds a manifest (package versions, model name, device,
 taxonomy, refinement config, RNG seed and deterministic-runtime flags), so any
 reported number can be traced to the run that produced it.
-
-Instance reports disclose how many shared images were eligible and list those
-excluded for lacking instances. Predictions from a model and from the
-connected-component heuristic are rejected if combined in one instance metric.
 
 ## Quality checks
 

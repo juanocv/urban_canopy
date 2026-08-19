@@ -48,7 +48,7 @@ def _coco(tmp_path):
     return CocoDataset.load(path)
 
 
-def _predictions(tmp_path, *, mask=None, with_instances=False, extra_record=None):
+def _predictions(tmp_path, *, mask=None, extra_record=None):
     mask = _tree_mask() if mask is None else mask
     ratio = float(mask.sum()) / (HEIGHT * WIDTH)
     record = {
@@ -62,12 +62,6 @@ def _predictions(tmp_path, *, mask=None, with_instances=False, extra_record=None
         "total_pixels": HEIGHT * WIDTH,
         "mask_status": "available",
         "mask": encode_rle(mask),
-        "instances": (
-            [{"label": "tree", "score": 0.9, "source": "model", "mask": encode_rle(mask)}]
-            if with_instances
-            else None
-        ),
-        "instance_source": "model" if with_instances else None,
         "quality_flags": [],
         "backend": "stub",
         "class_space": "ade20k",
@@ -83,8 +77,6 @@ def _predictions(tmp_path, *, mask=None, with_instances=False, extra_record=None
         "total_pixels": HEIGHT * WIDTH,
         "mask_status": "available",
         "mask": encode_rle(np.zeros((HEIGHT, WIDTH), bool)),
-        "instances": [] if with_instances else None,
-        "instance_source": "model" if with_instances else None,
         "quality_flags": ["empty_tree_mask"],
         "backend": "stub",
         "class_space": "ade20k",
@@ -99,13 +91,10 @@ def _predictions(tmp_path, *, mask=None, with_instances=False, extra_record=None
 
 
 def test_perfect_predictions_score_perfectly(tmp_path):
-    report = evaluate(_predictions(tmp_path, with_instances=True), _coco(tmp_path))
+    report = evaluate(_predictions(tmp_path), _coco(tmp_path))
     assert report.n_matched_images == 2
     assert report.semantic["micro"]["iou"] == pytest.approx(1.0)
     assert report.coverage["mae_pp"] == pytest.approx(0.0)
-    assert report.instances["recall"] == pytest.approx(1.0)
-    assert report.instances["mean_matched_iou"] == pytest.approx(1.0)
-    assert report.instances["AP50"] == pytest.approx(1.0)
 
 
 def test_shifted_predictions_show_error(tmp_path):
@@ -117,41 +106,6 @@ def test_shifted_predictions_show_error(tmp_path):
     # Same area, so the coverage indicator agrees even though the pixels do not:
     # exactly why level 1 and level 3 are separate metrics.
     assert report.coverage["mae_pp"] == pytest.approx(0.0)
-
-
-def test_semantic_only_predictions_skip_instances_with_reason(tmp_path):
-    report = evaluate(_predictions(tmp_path, with_instances=False), _coco(tmp_path))
-    assert report.instances is None
-    assert "instance" in report.instances_skipped_reason
-    assert report.instance_eligibility == {
-        "n_shared": 2,
-        "n_eligible": 0,
-        "excluded_images": {
-            "a.jpg": "instances_unavailable",
-            "empty.jpg": "instances_unavailable",
-        },
-    }
-
-
-def test_instance_evaluation_discloses_ineligible_shared_images(tmp_path):
-    predictions = _predictions(tmp_path, with_instances=True)
-    predictions.records[1].instances = None
-    predictions.records[1].instance_source = None
-
-    report = evaluate(predictions, _coco(tmp_path))
-
-    assert report.instances["n_images"] == 1
-    assert report.instances["n_shared"] == 2
-    assert report.instances["n_eligible"] == 1
-    assert report.instances["excluded_images"] == {"empty.jpg": "instances_unavailable"}
-
-
-def test_instance_evaluation_rejects_mixed_prediction_origins(tmp_path):
-    predictions = _predictions(tmp_path, with_instances=True)
-    predictions.records[1].instance_source = "connected_components_heuristic"
-
-    with pytest.raises(ValueError, match="cannot mix prediction origins"):
-        evaluate(predictions, _coco(tmp_path))
 
 
 def test_unavailable_tree_class_is_not_scored_as_an_empty_prediction(tmp_path):
@@ -222,14 +176,24 @@ def test_wrong_schema_is_rejected(tmp_path):
         load_predictions(path)
 
 
-def test_legacy_schema_requires_regeneration(tmp_path):
+@pytest.mark.parametrize(
+    ("schema", "reason"),
+    [
+        ("urban_canopy/predictions/1", "denominator"),
+        # v2 carried per-instance predictions. Instance evaluation was removed
+        # from the project, so those files must be regenerated rather than read
+        # with their instance payload silently ignored.
+        ("urban_canopy/predictions/2", "instance"),
+    ],
+)
+def test_legacy_schema_requires_regeneration(tmp_path, schema, reason):
     path = tmp_path / "legacy.json"
-    path.write_text(
-        json.dumps({"schema": "urban_canopy/predictions/1", "images": []}),
-        encoding="utf-8",
-    )
-    with pytest.raises(ValueError, match="legacy"):
+    path.write_text(json.dumps({"schema": schema, "images": []}), encoding="utf-8")
+    with pytest.raises(ValueError, match="legacy") as excinfo:
         load_predictions(path)
+    message = str(excinfo.value)
+    assert reason in message
+    assert PREDICTIONS_SCHEMA in message
 
 
 def test_evaluation_refuses_dataset_without_a_tree_category(tmp_path):

@@ -34,15 +34,6 @@ BACKEND_DEFAULT_MODEL = {
     "mask2former": "facebook/mask2former-swin-large-ade-semantic",
 }
 
-#: Whether a backend, in its default configuration, can separate individual
-#: trees. None of them can: see the audit in each adapter's module docstring.
-BACKEND_SUPPORTS_TREE_INSTANCES = {
-    "oneformer": False,
-    "mask2former": False,
-    "detectron2": False,  # True only in mode="instance" with custom weights
-    "deeplab": False,
-}
-
 
 def _optional_import_error(component: str, install_hint: str, exc: ModuleNotFoundError) -> None:
     missing = exc.name or "unknown"
@@ -113,15 +104,6 @@ def build_segmenter(
         try:
             from .detectron2 import Detectron2Segmenter
 
-            # Custom weights select the instance mode; without them the model-zoo
-            # panoptic baseline is built.
-            if kwargs.get("weights_path"):
-                return Detectron2Segmenter(**kwargs)
-            kwargs.pop("weights_path", None)
-            kwargs.pop("config_yml", None)
-            kwargs.pop("mode", None)
-            kwargs.pop("thing_classes", None)
-            kwargs.pop("class_space", None)
             return Detectron2Segmenter.from_zoo(**kwargs)
         except ModuleNotFoundError as exc:
             _optional_import_error(

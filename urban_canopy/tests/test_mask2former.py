@@ -13,7 +13,6 @@ import pytest
 
 from urban_canopy.models.factory import (
     BACKEND_CLASS_SPACE,
-    BACKEND_SUPPORTS_TREE_INSTANCES,
     BACKENDS,
     CHECKPOINT_DEFINES_CLASS_SPACE,
 )
@@ -26,12 +25,6 @@ def test_mask2former_is_a_registered_backend():
     assert "mask2former" in BACKENDS
     assert len(BACKENDS) == 4
     assert BACKEND_CLASS_SPACE["mask2former"] == "ade20k"
-
-
-def test_no_backend_claims_tree_instances():
-    # Every published checkpoint of every backend has tree as a stuff class.
-    assert set(BACKEND_SUPPORTS_TREE_INSTANCES) == set(BACKENDS)
-    assert not any(BACKEND_SUPPORTS_TREE_INSTANCES.values())
 
 
 def test_checkpoint_defines_class_space_for_the_huggingface_backends():
