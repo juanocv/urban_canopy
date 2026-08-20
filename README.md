@@ -1,6 +1,6 @@
-# Urban Canopy
+# Urban Tree Coverage
 
-Urban Canopy estimates the **visible tree-canopy coverage** of urban streets from
+Urban Tree Coverage estimates the **visible tree coverage** of urban streets from
 Google Street View imagery, using semantic and panoptic segmentation. The
 production package lives in `urban_canopy/`; third-party model checkouts
 (OneFormer via HuggingFace, Detectron2, DeepLab) stay outside the package
@@ -29,7 +29,7 @@ medium / high greenery") are produced: the continuous ratio is the output.
 3. **Segmentation** — OneFormer (ADE20K), Mask2Former (ADE20K, COCO or
    Cityscapes), Detectron2 (COCO-panoptic), DeepLab
    (Cityscapes), behind one common contract.
-4. **Refinement** — conservative, optional cleanup of the canopy mask (speck
+4. **Refinement** — conservative, optional cleanup of the tree coverage mask (speck
    removal, small-hole filling), with a growth guard that prevents any setting
    from inflating the mask by more than a configured fraction.
 5. **Indicators** — coverage ratios per image, with quality flags and full
@@ -105,7 +105,7 @@ samples/images/            Small curated image set for trying the pipeline
 
 ## Trying it without an API key
 
-`samples/images/` holds seven curated frames spanning 0% to 40% canopy —
+`samples/images/` holds seven curated frames spanning 0% to 40% tree coverage —
 including a no-trees negative case and a four-heading sweep of one location.
 `notebooks/` walks through them:
 
@@ -397,12 +397,12 @@ heavyweight tests under one of those markers.
 ## Citation
 
 ```bibtex
-@misc{urban_canopy_2026,
+@misc{urban_tree_coverage_2026,
   author = {Juan Oliveira de Carvalho},
-  title = {Urban Canopy: Visible Street-Level Tree Coverage from Street View Imagery Using Semantic Segmentation},
+  title = {Urban Tree Coverage: Visible Street-Level Tree Coverage from Street View Imagery Using Semantic Segmentation},
   year = {2026},
   publisher = {GitHub},
   journal = {GitHub repository},
-  url = {https://github.com/juanocv/urban_canopy}
+  url = {https://github.com/juanocv/urban_tree_coverage}
 }
 ```
