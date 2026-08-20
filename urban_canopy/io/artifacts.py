@@ -31,22 +31,19 @@ identical numbers.
 
 from __future__ import annotations
 
-import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import cv2
 import numpy as np
 
-from urban_canopy.io.image_io import (
-    TREE_COLOR_BGR,
-    VEGETATION_COLOR_BGR,
-    instances_overlay_bgr,
-    mask_overlay_bgr,
-)
+from urban_canopy.io.atomic import atomic_write_bytes, atomic_write_text
+from urban_canopy.io.image_io import TREE_COLOR_BGR, VEGETATION_COLOR_BGR, mask_overlay_bgr
+from urban_canopy.io.json_io import json_dumps
 from urban_canopy.log import get_logger
 
 logger = get_logger(__name__)
@@ -94,7 +91,7 @@ class RunLayout:
     predictions_json: Path
 
     @classmethod
-    def create(cls, outdir: str | Path, run_id: str) -> "RunLayout":
+    def create(cls, outdir: str | Path, run_id: str) -> RunLayout:
         """
         Reserve a fresh run directory under *outdir*.
 
@@ -103,15 +100,21 @@ class RunLayout:
         rare, and silently merging their artifacts would reintroduce exactly the
         overwrite this layout exists to prevent.
         """
-        base = Path(outdir) / run_id
+        outdir = Path(outdir)
+        outdir.mkdir(parents=True, exist_ok=True)
+        base = outdir / run_id
         root = base
         attempt = 2
-        while root.exists():
-            root = base.with_name(f"{base.name}-{attempt}")
-            attempt += 1
+        while True:
+            try:
+                root.mkdir(exist_ok=False)
+                break
+            except FileExistsError:
+                root = base.with_name(f"{base.name}-{attempt}")
+                attempt += 1
 
         views = root / "views"
-        views.mkdir(parents=True, exist_ok=True)
+        views.mkdir()
         return cls(
             root=root,
             views=views,
@@ -132,7 +135,6 @@ class ArtifactConfig:
     save_refined_mask: bool = True
     save_overlay: bool = True
     save_vegetation_overlay: bool = False
-    save_instances: bool = True
     save_metrics_json: bool = True
 
 
@@ -159,7 +161,17 @@ def artifact_stem(result, *, index: int | None = None) -> str:
 
 
 def _write_mask(path: Path, mask: np.ndarray) -> None:
-    cv2.imwrite(str(path), (np.asarray(mask).astype(bool).astype(np.uint8) * 255))
+    _write_image(path, np.asarray(mask).astype(bool).astype(np.uint8) * 255)
+
+
+def _write_image(path: Path, image: np.ndarray) -> None:
+    suffix = path.suffix.lower()
+    if suffix not in (".png", ".jpg", ".jpeg"):
+        raise ValueError(f"Unsupported artifact image extension: {suffix!r}.")
+    ok, encoded = cv2.imencode(suffix, np.asarray(image))
+    if not ok:
+        raise RuntimeError(f"OpenCV failed to encode artifact image {path.name!r}.")
+    atomic_write_bytes(path, encoded.tobytes())
 
 
 def write_view_artifacts(
@@ -186,7 +198,7 @@ def write_view_artifacts(
 
     if config.save_rgb and rgb is not None:
         path = target / "rgb.png"
-        cv2.imwrite(str(path), cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2BGR))
+        _write_image(path, cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2BGR))
         written["rgb"] = str(path)
 
     if config.save_raw_mask:
@@ -201,27 +213,22 @@ def write_view_artifacts(
 
     if config.save_overlay and rgb is not None:
         path = target / "overlay_tree.png"
-        cv2.imwrite(str(path), mask_overlay_bgr(rgb, result.refined_mask, color=TREE_COLOR_BGR))
+        _write_image(path, mask_overlay_bgr(rgb, result.refined_mask, color=TREE_COLOR_BGR))
         written["overlay_tree"] = str(path)
 
     if config.save_vegetation_overlay and rgb is not None and result.vegetation_mask is not None:
         path = target / "overlay_vegetation.png"
-        cv2.imwrite(
-            str(path),
+        _write_image(
+            path,
             mask_overlay_bgr(rgb, result.vegetation_mask, color=VEGETATION_COLOR_BGR),
         )
         written["overlay_vegetation"] = str(path)
-
-    if config.save_instances and rgb is not None and result.instances:
-        path = target / "instances.png"
-        cv2.imwrite(str(path), instances_overlay_bgr(rgb, result.instances))
-        written["instances"] = str(path)
 
     if config.save_metrics_json:
         path = target / "metrics.json"
         payload = result.to_dict(include_artifacts=False)
         payload["artifacts"] = written
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        atomic_write_text(path, json_dumps(payload, indent=2))
         written["metrics_json"] = str(path)
 
     result.artifacts.update(written)
@@ -239,8 +246,4 @@ def write_run_artifacts(
 def write_json(payload: Any, path: str | Path) -> Path:
     """Write a JSON document, creating parent directories as needed."""
     target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False, default=str), encoding="utf-8"
-    )
-    return target
+    return atomic_write_text(target, json_dumps(payload, indent=2))

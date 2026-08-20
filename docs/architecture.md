@@ -15,15 +15,15 @@ view plan (single / multi-view)          ← deterministic, config-driven
         │  headings, pitch, fov
         ▼
 segmentation backend            ← OneFormer | Mask2Former | Detectron2 | DeepLab
-        │  SegmentationOutput: group masks per taxonomy, instances?, notes
+        │  SegmentationOutput: group masks per taxonomy, notes
         ▼
 tree-mask resolution                     ← tree class, or explicit vegetation proxy
         ▼
 conservative refinement                  ← optional; growth-guarded
         ▼
-coverage indicators                      ← tree_coverage_ratio over valid pixels
+coverage indicators                      ← tree pixels / all image pixels
         ▼
-aggregation (multi-view)                 ← median/IQR/p25/p75; counts stay per view
+aggregation (multi-view)                 ← median/IQR/p25/p75 over coverage ratios
         ▼
 exports                                  ← artifacts, metrics JSON, CSV, predictions
 ```
@@ -38,20 +38,21 @@ ground-truth export (see `docs/evaluation.md`).
 | `core/pipeline.py` | Orchestration; dependency-injected segmenter + Street View client |
 | `core/viewplan.py` | Deterministic heading plans (fixed / offsets / equiangular) |
 | `core/config.py` | `CanopyConfig`, seeds, run manifest |
-| `core/results.py` | `ViewResult`, `MultiViewResult`, quality flags, CSV rows |
+| `validation.py` | Dependency-free limits shared by dataclasses, CLI and API |
+| `core/results.py` | View results, structured heading failures, CSV rows |
 | `io/streetview.py` | GSV client, cache, geocoding, `ImageRequest`, pano metadata |
-| `io/image_io.py` | Decoding to RGB, valid-pixel mask, overlays |
-| `io/artifacts.py` | Per-view audit artifacts |
+| `io/image_io.py` | Decoding to RGB and overlays |
+| `io/artifacts.py` | Per-view audit artifacts with checked atomic writes |
+| `io/atomic.py`, `io/json_io.py` | Atomic file replacement and strict JSON conversion |
 | `io/geo.py` | Pure geographic helpers |
 | `models/taxonomy.py` | Class-space → group mapping; tree vs vegetation kept apart |
-| `models/base.py` | `SegmentationOutput` contract, instance provenance constants |
+| `models/base.py` | `SegmentationOutput` contract and its validation |
 | `models/{oneformer,mask2former,detectron2,deeplab}.py` | Backend adapters |
-| `models/factory.py` | Lazy backend construction |
+| `models/factory.py` | Lazy backend construction; optional ML imports happen at construction |
 | `processing/coverage.py` | The indicator; proxy/unavailable semantics |
 | `processing/refinement.py` | Conservative canopy cleanup with growth guard |
-| `processing/instances.py` | Connected-component heuristic, explicitly flagged |
 | `processing/aggregate.py` | Robust multi-view statistics |
-| `evaluation/*` | COCO loading, RLE, three metric levels, runner, interchange |
+| `evaluation/*` | COCO loading, RLE, two metric levels, runner, interchange |
 | `cli/`, `webapi.py` | Interfaces |
 
 ## Mapping from sidewalk_analysis
@@ -62,7 +63,7 @@ ground-truth export (see `docs/evaluation.md`).
 |---|---|
 | `StreetViewClient`, `ImageRequest`, geocoding, joblib cache | **Reused**; added pano-id/date recording, hashable request |
 | `io/geo.py` | **Reused** verbatim |
-| `read_rgb` normalisation | **Reused**; watermark handling became the valid-pixel mask |
+| Image decoding | **Adapted**; `decode_rgb`, `from_bgr_array` and `ensure_rgb_u8` keep encoded, BGR and RGB inputs explicit while Street View frames remain intact |
 | `log.py` (text/JSON logging) | **Reused** (`SWAI_*` → `UC_*`) |
 | `diagnostics.py` | **Reused**, trimmed to relevant deps |
 | Settings pattern (pydantic-settings, `.env`) | **Reused**, including the `extra="ignore"` regression fix and its test |
@@ -79,10 +80,10 @@ ground-truth export (see `docs/evaluation.md`).
 
 | Component | Change |
 |---|---|
-| `Segmenter` protocol (4-tuple) | → `SegmentationOutput` dataclass: taxonomy-driven group masks, honest instance support, provenance notes |
+| `Segmenter` protocol (4-tuple) | → `SegmentationOutput` dataclass: taxonomy-driven group masks, provenance notes |
 | Backend wrappers | Target decoupled from `sidewalk`; per-backend class-space audit; **no refinement inside adapters** (the parent called `shave_above_top_envelope` there; refinement is now one explicit pipeline stage) |
 | `AliasSegmenter` label synonyms | → `Taxonomy` (data, serialisable, per-study override) |
-| Multi-view aggregation (median width) | → robust stats over coverage ratios; per-view instance counts |
+| Multi-view aggregation (median width) | → robust stats over coverage ratios |
 | Debug artifacts | → structured per-view artifact directories |
 
 ### Removed (not carried into the inference path)
@@ -113,9 +114,31 @@ being measured. Heading plans here are deterministic and blind to the imagery.
   coverage as unavailable. A name that matches no known dataset is refused
   rather than defaulted: applying an ADE20K taxonomy to unknown classes would
   mislabel every pixel silently.
-- **`InstanceMask.source`**: `model` or `connected_components_heuristic`;
-  metrics and reports carry it through.
-- **Valid pixels**: whatever is excluded (watermark strip) leaves numerator and
-  denominator together; ratios are always fractions of what was looked at.
+- **Taxonomy consistency**: every adapter rejects a taxonomy from another class
+  space before importing or downloading its model. Aliases use the same
+  normalization as predicted labels; duplicate group names and ambiguous
+  aliases are rejected unless `alias_priority` resolves the conflict.
+- **Area, never counts.** There is no per-instance output: no published
+  checkpoint for these class spaces has tree as a *thing* class, and every
+  downloadable tree instance model is overhead aerial imagery. Ground truth is
+  still annotated per tree and unioned into the semantic mask.
+- **Complete-frame denominator**: Street View frames, including attribution and
+  watermark pixels, remain intact. Coverage is always divided by `H * W`.
+- **Prediction mask status**: `available`, `unavailable` (the class space has no
+  tree class) or `omitted` (mask export disabled). Only available masks enter
+  semantic metrics.
 - **Predictions interchange**: uncompressed COCO RLE, readable with or without
   pycocotools, manifest embedded.
+- **Multi-view minimum**: a plan requires `min_successful_views >= 1`. Each
+  failed heading records stage, exception type and message; falling below the
+  minimum raises `MultiViewAnalysisError` rather than returning an empty run.
+- **Strict JSON**: undefined numeric metrics remain undefined in memory and are
+  exported as JSON `null`; `NaN` and `Infinity` are never written.
+- **Atomic outputs**: cache frames, JSON, CSV and image artifacts are written to
+  a sibling temporary file and atomically replace the target only after success.
+- **Bounded RGB retention**: `keep_rgb` defaults to false. CLI batches yield one
+  result at a time and release RGB after per-view artifacts; the API retains it
+  only for `/analyse/single` requests that ask for overlays.
+- **Reproducibility levels**: RNG seeding and deterministic Torch algorithms are
+  separate manifest fields. `PYTHONHASHSEED` is observed, never assigned after
+  startup, and cross-stack bitwise identity is explicitly not guaranteed.

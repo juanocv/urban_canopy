@@ -5,27 +5,21 @@ Robust statistics over the per-view coverage ratios of one location or street
 segment: mean, median, IQR, p25/p75, and the two counts that let a reader judge
 them (views attempted, views that produced a usable ratio).
 
-The one thing this module refuses to do is add up instance counts across views.
-A tree photographed from four headings is one tree and four detections; summing
-them answers no question anyone asked. Counts therefore stay per view, and
-``instance_counts`` carries the note explaining why. Cross-view association --
-matching the same crown between headings -- is not implemented, and until it is,
-no total is available.
+Every statistic here is a summary of per-view *coverage ratios*. Nothing is
+summed across views: a tree photographed from four headings is one tree seen
+four times, so counts would be meaningless even if the pipeline produced them.
+It does not -- coverage is measured as an area fraction, never as a count.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 import numpy as np
 
 __all__ = ["AggregateStats", "MultiViewAggregate", "aggregate_values", "aggregate_views"]
-
-NO_CROSS_VIEW_ASSOCIATION_NOTE = (
-    "Instance counts are per view and are never summed: the same tree can appear "
-    "in several headings, and no cross-view association is implemented."
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +63,10 @@ def aggregate_values(
     honest.
     """
     total = len(values) if n_views is None else int(n_views)
+    if total < len(values):
+        raise ValueError(
+            f"n_views ({total}) cannot be smaller than the {len(values)} supplied value(s)."
+        )
     finite = [float(v) for v in values if v is not None and np.isfinite(float(v))]
 
     if not finite:
@@ -99,13 +97,9 @@ class MultiViewAggregate:
 
     tree_coverage: AggregateStats
     vegetation_coverage: AggregateStats
-    #: One entry per view, in view order. Never summed; see the module docstring.
-    instance_counts: tuple[int | None, ...] = ()
-    instances_supported: bool = False
-    instance_source: str | None = None
+    #: One entry per view, in acquisition order.
     headings: tuple[int | None, ...] = ()
     quality_flags: tuple[str, ...] = field(default_factory=tuple)
-    notes: tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -116,12 +110,8 @@ class MultiViewAggregate:
                 if key not in ("n_views", "n_valid_views")
             },
             "vegetation_coverage": self.vegetation_coverage.to_dict(),
-            "instance_counts_per_view": list(self.instance_counts),
-            "instances_supported": self.instances_supported,
-            "instance_source": self.instance_source,
             "headings": list(self.headings),
             "quality_flags": list(self.quality_flags),
-            "notes": list(self.notes),
         }
 
 
@@ -141,27 +131,11 @@ def aggregate_views(views: Iterable, *, n_planned: int | None = None) -> MultiVi
     tree_values = [v.coverage.tree_coverage_ratio for v in views]
     veg_values = [v.coverage.vegetation_coverage_ratio for v in views]
 
-    counts: list[int | None] = []
-    supported = False
-    source: str | None = None
-    for view in views:
-        if view.instances is None:
-            counts.append(None)
-            continue
-        counts.append(len(view.instances))
-        supported = supported or bool(view.instances_supported)
-        source = source or view.instance_source
-
     flags = sorted({flag for view in views for flag in view.quality_flags})
-    notes = [NO_CROSS_VIEW_ASSOCIATION_NOTE] if any(c is not None for c in counts) else []
 
     return MultiViewAggregate(
         tree_coverage=aggregate_values(tree_values, n_views=total),
         vegetation_coverage=aggregate_values(veg_values, n_views=total),
-        instance_counts=tuple(counts),
-        instances_supported=supported,
-        instance_source=source,
         headings=tuple(view.capture.heading for view in views),
         quality_flags=tuple(flags),
-        notes=tuple(notes),
     )

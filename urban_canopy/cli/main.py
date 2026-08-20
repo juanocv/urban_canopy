@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
 
 from urban_canopy.log import configure_logging, get_logger
@@ -39,8 +40,6 @@ def _print_view(result, *, prefix: str = "") -> None:
     )
     if coverage.vegetation_coverage_pct is not None:
         print(f"{prefix}  vegetation coverage: {_fmt_pct(coverage.vegetation_coverage_pct)}")
-    if result.instance_count is not None:
-        print(f"{prefix}  instances: {result.instance_count}" f" (source={result.instance_source})")
     if result.quality_flags:
         print(f"{prefix}  flags: {', '.join(result.quality_flags)}")
 
@@ -54,9 +53,6 @@ def _print_aggregate(aggregate) -> None:
         print(f"  median = {100 * stats.median:.2f}%")
         print(f"  p25    = {100 * stats.p25:.2f}%   p75 = {100 * stats.p75:.2f}%")
         print(f"  IQR    = {100 * stats.iqr:.2f} pp")
-    counts = [c for c in aggregate.instance_counts if c is not None]
-    if counts:
-        print(f"  instances per view: {counts} (per view only; never summed across views)")
     for note in aggregate.notes:
         print(f"  note: {note}")
 
@@ -84,6 +80,8 @@ def _run_analyse(args, parser) -> int:
         write_view_artifacts,
     )
 
+    if (args.lat is None) != (args.lon is None):
+        parser.error("--lat and --lon must be provided together")
     has_location = args.address or (args.lat is not None and args.lon is not None)
     if not (args.image or has_location):
         parser.error("provide an address, --lat/--lon, or --image")
@@ -92,7 +90,24 @@ def _run_analyse(args, parser) -> int:
     if args.multi_view and args.image:
         parser.error("--multi-view needs Street View (an address or --lat/--lon)")
 
-    set_seed(args.seed)
+    plan = None
+    if args.multi_view:
+        from urban_canopy.core.viewplan import plan_headings
+
+        try:
+            plan = viewplan_from_args(args)
+        except ValueError as exc:
+            parser.error(str(exc))
+        if plan.min_successful_views < 1:
+            parser.error("--min-successful-views must be at least 1")
+        planned_count = len(plan_headings(plan))
+        if plan.min_successful_views > planned_count:
+            parser.error(
+                "--min-successful-views cannot exceed the number of distinct "
+                f"planned headings ({planned_count})"
+            )
+
+    set_seed(args.seed, deterministic=args.deterministic)
 
     # Resolve before loading any weights, so an impossible request fails in
     # milliseconds instead of after a multi-gigabyte download.
@@ -103,20 +118,63 @@ def _run_analyse(args, parser) -> int:
     pipe = build_pipeline(args, device, needs_streetview=bool(has_location))
     logger.info("Pipeline building took %.2f seconds", time.time() - started)
 
+    from urban_canopy.cli._argparse import DEFAULT_EXPORT
+
+    metrics_target = args.metrics_json
+    csv_target = args.csv
+    predictions_target = args.predictions_json
+    if args.save_artifacts:
+        metrics_target = metrics_target if metrics_target is not None else DEFAULT_EXPORT
+        csv_target = csv_target if csv_target is not None else DEFAULT_EXPORT
+        predictions_target = (
+            predictions_target if predictions_target is not None else DEFAULT_EXPORT
+        )
+    wants_output = bool(args.save_artifacts or metrics_target or csv_target or predictions_target)
+    layout = None
+
     # ---------------- run ----------------
     results = []
     multi = None
     if args.image:
-        results = pipe.analyse_images([p.resolve() for p in args.image])
+        artifact_config = None
+        for result in pipe.iter_analyse_images([p.resolve() for p in args.image]):
+            if args.save_artifacts:
+                if layout is None:
+                    layout = RunLayout.create(
+                        args.outdir,
+                        make_run_id(pipe.segmenter.backend_name, name=args.run_name),
+                    )
+                    print(f"\nRun directory: {layout.root}")
+                    artifact_config = ArtifactConfig(outdir=layout.views)
+                assert artifact_config is not None
+                write_view_artifacts(result, artifact_config, index=len(results))
+                # RGB is the dominant per-view allocation. Once its artifacts
+                # exist, keeping it until the whole batch finishes serves no
+                # consumer; masks and compact metrics remain available for the
+                # run-level exports below.
+                result.rgb_image = None
+            results.append(result)
         if not results:
             print("No image could be analysed", file=sys.stderr)
             return 1
     elif args.multi_view:
-        plan = viewplan_from_args(args)
-        if args.address:
-            multi = pipe.analyse_address_multiview(args.address, plan=plan)
-        else:
-            multi = pipe.analyse_multiview(args.lat, args.lon, plan=plan)
+        from urban_canopy.core.pipeline import MultiViewAnalysisError
+
+        assert plan is not None
+        try:
+            if args.address:
+                multi = pipe.analyse_address_multiview(args.address, plan=plan)
+            else:
+                multi = pipe.analyse_multiview(args.lat, args.lon, plan=plan)
+        except MultiViewAnalysisError as exc:
+            print(f"Multi-view analysis failed: {exc}", file=sys.stderr)
+            for failure in exc.failures:
+                print(
+                    f"  heading={failure.heading} stage={failure.stage}: "
+                    f"{failure.error_type}: {failure.message}",
+                    file=sys.stderr,
+                )
+            return 2
         results = multi.views
     else:
         if args.address:
@@ -144,44 +202,32 @@ def _run_analyse(args, parser) -> int:
 
     manifest = build_manifest(
         config=pipe.config,
-        backend=args.seg,
+        backend=pipe.segmenter.backend_name,
         class_space=pipe.segmenter.class_space,
         taxonomy=pipe.segmenter.taxonomy,
         model_name=getattr(pipe.segmenter, "model_name", None),
+        model_sha256=getattr(pipe.segmenter, "checkpoint_sha256", None),
         device=device,
     )
 
     # ---------------- artifacts / exports ----------------
-    # --save-artifacts is the "give me everything" flag: it implies the three
-    # export flags too, so a run that wants the full audit bundle does not have
-    # to spell out --metrics-json --csv --predictions-json on top of it. Each
-    # export flag still works on its own (e.g. --csv alone, no images), and an
-    # explicit path on any of them overrides where it lands.
-    from urban_canopy.cli._argparse import DEFAULT_EXPORT
-
-    metrics_target = args.metrics_json
-    csv_target = args.csv
-    predictions_target = args.predictions_json
-    if args.save_artifacts:
-        metrics_target = metrics_target if metrics_target is not None else DEFAULT_EXPORT
-        csv_target = csv_target if csv_target is not None else DEFAULT_EXPORT
-        predictions_target = (
-            predictions_target if predictions_target is not None else DEFAULT_EXPORT
-        )
-
     # The run directory is created only when the run actually writes something,
     # so a plain analysis leaves no empty folders behind.
-    wants_output = bool(args.save_artifacts or metrics_target or csv_target or predictions_target)
     if not wants_output:
         return 0
 
-    layout = RunLayout.create(args.outdir, make_run_id(args.seg, name=args.run_name))
-    print(f"\nRun directory: {layout.root}")
+    if layout is None:
+        layout = RunLayout.create(
+            args.outdir, make_run_id(pipe.segmenter.backend_name, name=args.run_name)
+        )
+        print(f"\nRun directory: {layout.root}")
 
-    if args.save_artifacts:
+    if args.save_artifacts and not args.image:
         artifact_config = ArtifactConfig(outdir=layout.views)
         for index, result in enumerate(results):
             write_view_artifacts(result, artifact_config, index=index)
+            result.rgb_image = None
+    if args.save_artifacts:
         print(f"  views/      {len(results)} view folder(s)")
 
     if metrics_target is not None:
@@ -200,14 +246,8 @@ def _run_analyse(args, parser) -> int:
 
     if predictions_target is not None:
         from urban_canopy.evaluation.predictions import build_predictions, write_predictions
-        from urban_canopy.io.image_io import get_exclude_bottom_px
 
-        exclude = (
-            args.exclude_bottom_px
-            if args.exclude_bottom_px is not None
-            else get_exclude_bottom_px()
-        )
-        payload = build_predictions(results, manifest=manifest, exclude_bottom_px=exclude)
+        payload = build_predictions(results, manifest=manifest)
         target = _export_path(predictions_target, layout.predictions_json)
         write_predictions(target, payload)
         print(f"  {target.name:<12} for `tree-ai evaluate`")
@@ -222,7 +262,6 @@ def _run_evaluate(args) -> int:
     report = evaluate_files(
         args.predictions,
         args.annotations,
-        iou_threshold=args.iou_threshold,
         keep_per_image=not args.no_per_image,
     )
     payload = report.to_dict()
@@ -243,22 +282,6 @@ def _run_evaluate(args) -> int:
         print(f"  bias = {cov['bias_pp']:+.2f} pp")
         if cov.get("pearson_r") is not None:
             print(f"  Pearson r = {cov['pearson_r']:.3f} (complementary; not an error metric)")
-
-    if payload["instances"] is not None:
-        inst = payload["instances"]
-        print(f"\nINSTANCES (IoU >= {inst['iou_threshold']:.2f}, ranked by {inst['ranked_by']}):")
-        print(f"  TP={inst['tp']}  FP={inst['fp']}  FN={inst['fn']}")
-        print(f"  precision = {inst['precision']:.4f}")
-        print(f"  recall    = {inst['recall']:.4f}")
-        print(f"  F1        = {inst['f1']:.4f}")
-        print(f"  mean matched IoU = {inst['mean_matched_iou']:.4f}")
-        if inst.get("AP50") is not None:
-            print(f"  AP50    = {inst['AP50']:.4f}")
-            print(f"  AP50:95 = {inst['AP50:95']:.4f}")
-        elif inst.get("ap_unavailable_reason"):
-            print(f"  AP: unavailable -- {inst['ap_unavailable_reason']}")
-    elif payload["instances_skipped_reason"]:
-        print(f"\nINSTANCES: skipped -- {payload['instances_skipped_reason']}")
 
     if args.report_json:
         write_json(payload, args.report_json)
@@ -308,10 +331,8 @@ def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
-            try:
+            with suppress(ValueError, OSError):  # pragma: no cover - exotic streams
                 reconfigure(errors="replace")
-            except (ValueError, OSError):  # pragma: no cover - exotic streams
-                pass
 
     configure_logging(
         debug=args.debug,

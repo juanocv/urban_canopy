@@ -83,15 +83,18 @@ def test_analyse_writes_all_exports(tmp_path, stub_backend):
     assert code == 0
 
     payload = json.loads(metrics.read_text(encoding="utf-8"))
-    assert payload["manifest"]["model"]["backend"] == "oneformer"
+    # The backend that actually ran, not the one requested: these tests stub
+    # the segmenter, and the manifest has to name what produced the numbers.
+    assert payload["manifest"]["model"]["backend"] == StubSegmenter.backend_name
     assert payload["views"][0]["coverage"]["tree_coverage_pct"] == pytest.approx(25.0)
 
     header = csv_path.read_text(encoding="utf-8").splitlines()[0]
     assert "tree_coverage_pct" in header
 
     preds = json.loads(predictions.read_text(encoding="utf-8"))
-    assert preds["schema"] == "urban_canopy/predictions/1"
+    assert preds["schema"] == "urban_canopy/predictions/3"
     assert preds["images"][0]["file_name"] == "frame.jpg"
+    assert preds["images"][0]["mask_status"] == "available"
     assert preds["images"][0]["mask"] is not None
 
     run_dir = _only_run_dir(tmp_path / "o")
@@ -113,8 +116,8 @@ def test_run_directory_is_named_after_timestamp_and_backend(tmp_path, stub_backe
         ["--image", str(_image(tmp_path)), "--outdir", str(tmp_path / "o"), "--save-artifacts"]
     )
     run_dir = _only_run_dir(tmp_path / "o")
-    assert run_dir.name.endswith("_oneformer")
-    # 20260818-104512_oneformer
+    assert run_dir.name.endswith(f"_{StubSegmenter.backend_name}")
+    # e.g. 20260818-104512_stub
     assert len(run_dir.name.split("_")[0]) == len("20260818-104512")
 
 
@@ -209,6 +212,19 @@ def test_no_output_requested_creates_no_directory(tmp_path, stub_backend):
     assert not outdir.exists()
 
 
+def test_cli_retains_rgb_only_for_artifact_images():
+    from urban_canopy.cli._argparse import build_parser
+    from urban_canopy.cli._builder import config_from_args
+
+    parser = build_parser()
+    plain = parser.parse_args(["analyse", "--image", "x.jpg"])
+    artifacts = parser.parse_args(["analyse", "--image", "x.jpg", "--save-artifacts"])
+    deterministic = parser.parse_args(["analyse", "--image", "x.jpg", "--deterministic"])
+    assert config_from_args(plain).keep_rgb is False
+    assert config_from_args(artifacts).keep_rgb is True
+    assert config_from_args(deterministic).deterministic is True
+
+
 def test_analyse_requires_some_input(tmp_path, capsys, stub_backend):
     with pytest.raises(SystemExit):
         cli_main.main(["--outdir", str(tmp_path)])
@@ -218,6 +234,23 @@ def test_multiview_rejects_local_images(tmp_path, stub_backend):
     image = _image(tmp_path)
     with pytest.raises(SystemExit):
         cli_main.main(["--image", str(image), "--multi-view"])
+
+
+def test_multiview_rejects_impossible_success_minimum(tmp_path, stub_backend):
+    with pytest.raises(SystemExit):
+        cli_main.main(
+            [
+                "--lat",
+                "-23",
+                "--lon",
+                "-46",
+                "--multi-view",
+                "--offsets",
+                "0,90",
+                "--min-successful-views",
+                "3",
+            ]
+        )
 
 
 def _write_eval_fixtures(tmp_path):
@@ -240,7 +273,7 @@ def _write_eval_fixtures(tmp_path):
     ann_path.write_text(json.dumps(annotations), encoding="utf-8")
 
     predictions = {
-        "schema": "urban_canopy/predictions/1",
+        "schema": "urban_canopy/predictions/3",
         "manifest": {},
         "images": [
             {
@@ -252,10 +285,8 @@ def _write_eval_fixtures(tmp_path):
                 "tree_source": "tree_class",
                 "valid_pixels": 1200,
                 "total_pixels": 1200,
-                "exclude_bottom_px": 0,
+                "mask_status": "available",
                 "mask": encode_rle(mask),
-                "instances": None,
-                "instance_source": None,
                 "quality_flags": [],
                 "backend": "stub",
                 "class_space": "ade20k",

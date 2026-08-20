@@ -20,7 +20,9 @@ specifies.
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from numbers import Integral
+from typing import Any
 
 import numpy as np
 
@@ -115,18 +117,29 @@ def decode_rle(rle: Mapping[str, Any]) -> np.ndarray:
     if size is None or counts is None:
         raise ValueError("RLE needs both 'size' and 'counts'.")
 
+    if isinstance(size, (str, bytes)) or not isinstance(size, Sequence) or len(size) != 2:
+        raise ValueError("RLE 'size' must be a two-item [height, width] sequence.")
+
     if isinstance(counts, (str, bytes)):
         counts = _decode_compressed_counts(counts)
+    elif not isinstance(counts, Sequence):
+        raise ValueError("RLE 'counts' must be a sequence or compressed string.")
 
+    if any(isinstance(value, bool) or not isinstance(value, Integral) for value in size):
+        raise ValueError("RLE size entries must be integers.")
     height, width = int(size[0]), int(size[1])
+    if height < 0 or width < 0:
+        raise ValueError("RLE size entries must be non-negative.")
 
     flat = np.zeros(height * width, dtype=bool)
 
     position = 0
     value = False
 
-    for run in counts:
-        run = int(run)
+    for raw_run in counts:
+        if isinstance(raw_run, bool) or not isinstance(raw_run, Integral):
+            raise ValueError("RLE counts must contain integers.")
+        run = int(raw_run)
 
         if run < 0:
             raise ValueError("RLE counts must be non-negative.")

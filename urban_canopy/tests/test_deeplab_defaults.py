@@ -12,12 +12,25 @@ import pytest
 
 from urban_canopy.cli._argparse import build_parser
 from urban_canopy.cli._builder import build_segmenter_from_args
-from urban_canopy.models.deeplab import get_settings
+from urban_canopy.models.backend_settings import BackendSettings
 
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch, tmp_path):
-    for key in ("UC_DEEPLAB_CKPT", "UC_DEEPLAB_REPO", "UC_DEEPLAB_MODEL"):
+    for key in (
+        "UC_SEG_BACKEND",
+        "UC_SEG_MODEL",
+        "UC_SEG_TASK",
+        "UC_DEVICE",
+        "UC_TAXONOMY",
+        "UC_D2_CONFIG",
+        "UC_D2_WEIGHTS",
+        "UC_D2_SCORE_THRESH",
+        "UC_DEEPLAB_CKPT",
+        "UC_DEEPLAB_REPO",
+        "UC_DEEPLAB_MODEL",
+        "UC_TRUST_CHECKPOINT",
+    ):
         monkeypatch.delenv(key, raising=False)
     # Settings reads .env from the working directory; keep tests off the repo's.
     monkeypatch.chdir(tmp_path)
@@ -35,10 +48,10 @@ def _checkpoint(tmp_path, name="best_deeplabv3plus_mobilenet_cityscapes_os16.pth
 
 # --------------------------------------------------------------- settings ---
 def test_unset_settings_are_none():
-    settings = get_settings()
-    assert settings.ckpt is None
-    assert settings.repo is None
-    assert settings.model is None
+    settings = BackendSettings()
+    assert settings.deeplab_checkpoint is None
+    assert settings.deeplab_repo is None
+    assert settings.deeplab_model is None
 
 
 def test_blank_values_count_as_unset(monkeypatch):
@@ -48,16 +61,20 @@ def test_blank_values_count_as_unset(monkeypatch):
     monkeypatch.setenv("UC_DEEPLAB_CKPT", "")
     monkeypatch.setenv("UC_DEEPLAB_REPO", "   ")
     monkeypatch.setenv("UC_DEEPLAB_MODEL", "")
-    settings = get_settings()
-    assert (settings.ckpt, settings.repo, settings.model) == (None, None, None)
+    settings = BackendSettings()
+    assert (
+        settings.deeplab_checkpoint,
+        settings.deeplab_repo,
+        settings.deeplab_model,
+    ) == (None, None, None)
 
 
 def test_settings_read_the_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("UC_DEEPLAB_CKPT", str(tmp_path / "w.pth"))
     monkeypatch.setenv("UC_DEEPLAB_MODEL", "deeplabv3plus_resnet101")
-    settings = get_settings()
-    assert settings.ckpt == tmp_path / "w.pth"
-    assert settings.model == "deeplabv3plus_resnet101"
+    settings = BackendSettings()
+    assert settings.deeplab_checkpoint == tmp_path / "w.pth"
+    assert settings.deeplab_model == "deeplabv3plus_resnet101"
 
 
 # ------------------------------------------------------------- precedence ---
@@ -85,6 +102,20 @@ def test_default_checkpoint_is_used_when_the_flag_is_absent(monkeypatch, tmp_pat
     assert captured["ckpt_path"] == str(checkpoint)
     # Inference from the filename still runs on a default-supplied checkpoint.
     assert captured["model_name"] == "deeplabv3plus_mobilenet"
+    assert captured["allow_pickle"] is False
+
+
+def test_trust_checkpoint_enables_legacy_pickle(monkeypatch, tmp_path):
+    checkpoint = _checkpoint(tmp_path)
+    captured = {}
+    monkeypatch.setattr(
+        "urban_canopy.cli._builder.build_segmenter",
+        lambda backend, **kwargs: captured.update(kwargs) or object(),
+    )
+
+    build_segmenter_from_args(_args("--ckpt", str(checkpoint), "--trust-checkpoint"), "cpu")
+
+    assert captured["allow_pickle"] is True
 
 
 def test_flag_overrides_the_default(monkeypatch, tmp_path):

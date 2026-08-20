@@ -13,15 +13,15 @@ ratio, and pixel ratios need no scale.
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 
-from urban_canopy.io.image_io import read_rgb, valid_pixel_mask
+from urban_canopy.io.image_io import decode_rgb, ensure_rgb_u8
 from urban_canopy.io.streetview import ImageRequest, StreetViewClient
 from urban_canopy.log import get_logger
-from urban_canopy.models.base import HEURISTIC_INSTANCES, MODEL_INSTANCES
 from urban_canopy.processing.aggregate import aggregate_views
 from urban_canopy.processing.coverage import (
     TREE_SOURCE_PROXY,
@@ -29,16 +29,45 @@ from urban_canopy.processing.coverage import (
     compute_coverage,
     resolve_tree_mask,
 )
-from urban_canopy.processing.instances import instances_from_components
 from urban_canopy.processing.refinement import refine_canopy_mask
 
 from .config import CanopyConfig
-from .results import CaptureParams, MultiViewResult, QualityFlag, ViewResult
+from .results import CaptureParams, MultiViewResult, QualityFlag, ViewFailure, ViewResult
 from .viewplan import ViewPlanConfig, plan_headings
 
 logger = get_logger(__name__)
 
-__all__ = ["CanopyPipeline"]
+__all__ = ["CanopyPipeline", "MultiViewAnalysisError"]
+
+
+class MultiViewAnalysisError(RuntimeError):
+    """Raised when a view plan produces fewer usable views than required."""
+
+    def __init__(
+        self,
+        *,
+        min_successful_views: int,
+        planned_headings: Sequence[int],
+        successful_headings: Sequence[int],
+        failures: Sequence[ViewFailure],
+    ) -> None:
+        self.min_successful_views = int(min_successful_views)
+        self.planned_headings = tuple(int(h) for h in planned_headings)
+        self.successful_headings = tuple(int(h) for h in successful_headings)
+        self.failures = tuple(failures)
+        super().__init__(
+            f"Multi-view analysis produced {len(self.successful_headings)} usable view(s), "
+            f"but at least {self.min_successful_views} were required."
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "message": str(self),
+            "min_successful_views": self.min_successful_views,
+            "planned_headings": list(self.planned_headings),
+            "successful_headings": list(self.successful_headings),
+            "failures": [failure.to_dict() for failure in self.failures],
+        }
 
 
 class CanopyPipeline:
@@ -79,15 +108,19 @@ class CanopyPipeline:
     ) -> ViewResult:
         """Analyse an image already on disk, skipping Street View entirely."""
         path = Path(img_path)
-        rgb = read_rgb(path)
+        rgb = decode_rgb(path)
         params = capture or CaptureParams(source="local", image_path=str(path))
         if params.image_path is None:
             params = CaptureParams(**{**params.to_dict(), "image_path": str(path)})
-        return self.analyse_array(rgb, capture=params)
+        return self.analyse_rgb_array(rgb, capture=params)
+
+    def analyse_rgb_array(self, img_rgb: np.ndarray, *, capture: CaptureParams) -> ViewResult:
+        """Analyse a validated RGB frame without guessing or changing its colour space."""
+        return self._analyse(ensure_rgb_u8(img_rgb), capture)
 
     def analyse_array(self, img_rgb: np.ndarray, *, capture: CaptureParams) -> ViewResult:
-        """Analyse an in-memory RGB frame. Every other entry point funnels here."""
-        return self._analyse(img_rgb, capture)
+        """Compatibility alias for :meth:`analyse_rgb_array`; the input is RGB."""
+        return self.analyse_rgb_array(img_rgb, capture=capture)
 
     def analyse_coords(
         self,
@@ -105,9 +138,9 @@ class CanopyPipeline:
         request = ImageRequest(
             lat=lat,
             lon=lon,
-            heading=int(heading) % 360,
-            pitch=int(pitch),
-            fov=int(fov),
+            heading=heading,
+            pitch=pitch,
+            fov=fov,
             size=size or client.settings.default_size,
         )
         path = client.fetch(request)
@@ -149,12 +182,20 @@ class CanopyPipeline:
         client = self._require_streetview()
         config = plan or ViewPlanConfig()
         headings = plan_headings(config)
+        if config.min_successful_views < 1:
+            raise ValueError("min_successful_views must be at least 1.")
+        if config.min_successful_views > len(headings):
+            raise ValueError(
+                f"min_successful_views={config.min_successful_views} exceeds the "
+                f"{len(headings)} distinct planned heading(s)."
+            )
 
         pano_meta: dict[str, Any] = {}
         if record_metadata:
             pano_meta = self._panorama_metadata(client, lat, lon)
 
         views: list[ViewResult] = []
+        failures: list[ViewFailure] = []
         for heading in headings:
             request = ImageRequest(
                 lat=lat,
@@ -168,6 +209,14 @@ class CanopyPipeline:
                 path = client.fetch(request)
             except Exception as exc:
                 logger.warning("Heading %s: Street View fetch failed: %s", heading, exc)
+                failures.append(
+                    ViewFailure(
+                        heading=heading,
+                        stage="fetch",
+                        error_type=type(exc).__name__,
+                        message=str(exc),
+                    )
+                )
                 continue
 
             capture = CaptureParams(
@@ -187,6 +236,24 @@ class CanopyPipeline:
                 views.append(self.analyse_image(path, capture=capture))
             except Exception as exc:
                 logger.warning("Heading %s: analysis failed: %s", heading, exc)
+                failures.append(
+                    ViewFailure(
+                        heading=heading,
+                        stage="analysis",
+                        error_type=type(exc).__name__,
+                        message=str(exc),
+                    )
+                )
+
+        if len(views) < config.min_successful_views:
+            raise MultiViewAnalysisError(
+                min_successful_views=config.min_successful_views,
+                planned_headings=headings,
+                successful_headings=[
+                    int(view.capture.heading) for view in views if view.capture.heading is not None
+                ],
+                failures=failures,
+            )
 
         # n_views reflects the plan, not the survivors: two usable frames out of
         # eight planned is a different result from two out of two.
@@ -199,6 +266,7 @@ class CanopyPipeline:
             lon=lon,
             address=address,
             plan={**config.to_dict(), "planned_headings": headings},
+            failures=failures,
         )
 
     def analyse_address_multiview(
@@ -214,25 +282,30 @@ class CanopyPipeline:
 
     def analyse_images(self, paths: Sequence[str | Path]) -> list[ViewResult]:
         """Analyse a batch of local images, skipping the ones that fail to load."""
-        out: list[ViewResult] = []
+        return list(self.iter_analyse_images(paths))
+
+    def iter_analyse_images(self, paths: Sequence[str | Path]) -> Iterator[ViewResult]:
+        """Yield local-image results one at a time, skipping unreadable inputs."""
         for path in paths:
             try:
-                out.append(self.analyse_image(path))
+                yield self.analyse_image(path)
             except Exception as exc:
                 logger.warning("Skipping %s: %s", path, exc)
-        return out
 
     # ------------------------------------------------------------------ #
     # Core implementation                                                #
     # ------------------------------------------------------------------ #
     def _analyse(self, img_rgb: np.ndarray, capture: CaptureParams) -> ViewResult:
         config = self.config
-        rgb = np.asarray(img_rgb)
+        rgb = ensure_rgb_u8(img_rgb)
         height, width = rgb.shape[:2]
 
         output = self.segmenter.segment(rgb)
+        output.validate((height, width))
 
-        valid = valid_pixel_mask((height, width), exclude_bottom_px=config.exclude_bottom_px)
+        # Street View imagery is measured exactly as delivered. In particular,
+        # its attribution/watermark remains part of the frame and denominator.
+        valid = np.ones((height, width), dtype=bool)
 
         tree_raw, tree_source = resolve_tree_mask(
             output, allow_vegetation_proxy=config.allow_vegetation_proxy
@@ -265,10 +338,6 @@ class CanopyPipeline:
         if coverage.tree_coverage_ratio is not None and coverage.tree_coverage_ratio > 0.90:
             flags.append(QualityFlag.NEAR_TOTAL_COVERAGE)
 
-        instances, instance_source = self._resolve_instances(output, refined)
-        if instance_source == HEURISTIC_INSTANCES:
-            flags.append(QualityFlag.HEURISTIC_INSTANCES)
-
         return ViewResult(
             coverage=coverage,
             capture=capture,
@@ -279,32 +348,9 @@ class CanopyPipeline:
             refinement=refinement,
             vegetation_mask=None if vegetation is None else vegetation.astype(np.uint8),
             rgb_image=rgb if config.keep_rgb else None,
-            instances=instances,
-            instances_supported=bool(output.supports_tree_instances),
-            instance_source=instance_source,
             quality_flags=tuple(dict.fromkeys(flags)),
             backend_notes=tuple(output.notes),
         )
-
-    def _resolve_instances(self, output, refined_mask: np.ndarray):
-        mode = self.config.instance_mode
-        if mode == "none":
-            return None, None
-
-        if output.supports_tree_instances and output.instances is not None:
-            return list(output.instances), MODEL_INSTANCES
-
-        if mode == "heuristic":
-            return (
-                instances_from_components(
-                    refined_mask, min_area_px=self.config.heuristic_min_area_px
-                ),
-                HEURISTIC_INSTANCES,
-            )
-
-        # mode == "auto" and the backend cannot individualise trees: report
-        # nothing rather than something that looks like a count.
-        return None, None
 
     def _require_streetview(self) -> StreetViewClient:
         if self.sv is None:

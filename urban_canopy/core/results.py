@@ -12,17 +12,27 @@ memory.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 
+from urban_canopy.io.atomic import atomic_write_text
 from urban_canopy.processing.aggregate import MultiViewAggregate
 from urban_canopy.processing.coverage import CoverageMetrics
 from urban_canopy.processing.refinement import RefinementStats
+from urban_canopy.validation import (
+    validate_fov,
+    validate_heading,
+    validate_image_size,
+    validate_latitude,
+    validate_longitude,
+    validate_pitch,
+)
 
-__all__ = ["CaptureParams", "ViewResult", "MultiViewResult", "QualityFlag"]
+__all__ = ["CaptureParams", "ViewFailure", "ViewResult", "MultiViewResult", "QualityFlag"]
 
 
 class QualityFlag:
@@ -33,7 +43,6 @@ class QualityFlag:
     TREE_FROM_PROXY = "tree_from_vegetation_proxy"
     REFINEMENT_DISABLED = "refinement_disabled"
     GROWTH_GUARD = "refinement_growth_guard_triggered"
-    HEURISTIC_INSTANCES = "instances_are_heuristic"
     NEAR_TOTAL_COVERAGE = "coverage_above_90pct"
 
 
@@ -53,6 +62,24 @@ class CaptureParams:
     capture_date: str | None = None
     image_path: str | None = None
 
+    def __post_init__(self) -> None:
+        if self.source not in ("streetview", "local"):
+            raise ValueError(f"source must be 'streetview' or 'local'; got {self.source!r}.")
+        if self.lat is not None:
+            validate_latitude(self.lat)
+        if self.lon is not None:
+            validate_longitude(self.lon)
+        if (self.lat is None) != (self.lon is None):
+            raise ValueError("lat and lon must either both be present or both be absent.")
+        if self.heading is not None:
+            validate_heading(self.heading)
+        if self.pitch is not None:
+            validate_pitch(self.pitch)
+        if self.fov is not None:
+            validate_fov(self.fov)
+        if self.size is not None:
+            validate_image_size(self.size)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "source": self.source,
@@ -69,6 +96,24 @@ class CaptureParams:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ViewFailure:
+    """One planned heading that failed before producing a usable result."""
+
+    heading: int
+    stage: str  # "fetch" | "analysis"
+    error_type: str
+    message: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "heading": self.heading,
+            "stage": self.stage,
+            "error_type": self.error_type,
+            "message": self.message,
+        }
+
+
 @dataclass(slots=True)
 class ViewResult:
     """Everything one image produced."""
@@ -82,16 +127,9 @@ class ViewResult:
     refinement: RefinementStats
     vegetation_mask: np.ndarray | None = None
     rgb_image: np.ndarray | None = None
-    instances: list | None = None
-    instances_supported: bool = False
-    instance_source: str | None = None
     quality_flags: tuple[str, ...] = field(default_factory=tuple)
     backend_notes: tuple[str, ...] = field(default_factory=tuple)
     artifacts: dict[str, str] = field(default_factory=dict)
-
-    @property
-    def instance_count(self) -> int | None:
-        return None if self.instances is None else len(self.instances)
 
     def to_dict(self, *, include_artifacts: bool = True) -> dict[str, Any]:
         """JSON-safe view of the result; arrays stay out of it by design."""
@@ -101,11 +139,6 @@ class ViewResult:
             "capture": self.capture.to_dict(),
             "coverage": self.coverage.to_dict(),
             "refinement": self.refinement.to_dict(),
-            "instances": {
-                "count": self.instance_count,
-                "supported": self.instances_supported,
-                "source": self.instance_source,
-            },
             "quality_flags": list(self.quality_flags),
             "backend_notes": list(self.backend_notes),
         }
@@ -124,6 +157,7 @@ class MultiViewResult:
     lon: float | None = None
     address: str | None = None
     plan: dict[str, Any] = field(default_factory=dict)
+    failures: list[ViewFailure] = field(default_factory=list)
 
     def to_dict(self, *, include_artifacts: bool = True) -> dict[str, Any]:
         return {
@@ -131,6 +165,7 @@ class MultiViewResult:
             "plan": dict(self.plan),
             "aggregate": self.aggregate.to_dict(),
             "views": [v.to_dict(include_artifacts=include_artifacts) for v in self.views],
+            "failures": [failure.to_dict() for failure in self.failures],
         }
 
 
@@ -161,8 +196,6 @@ def results_to_rows(results: Sequence[ViewResult]) -> list[dict[str, Any]]:
                 "vegetation_coverage_pct": coverage.vegetation_coverage_pct,
                 "valid_pixels": coverage.valid_pixels,
                 "total_pixels": coverage.total_pixels,
-                "instance_count": result.instance_count,
-                "instance_source": result.instance_source or "",
                 "refinement_enabled": result.refinement.enabled,
                 "quality_flags": "|".join(result.quality_flags),
             }
@@ -175,14 +208,14 @@ def write_rows_csv(rows: Sequence[dict[str, Any]], path: str | Path) -> Path:
     import csv
 
     target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
-        target.write_text("", encoding="utf-8")
-        return target
+        return atomic_write_text(target, "")
 
     fieldnames = list(rows[0].keys())
-    with target.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-    return target
+    import io
+
+    handle = io.StringIO(newline="")
+    writer = csv.DictWriter(handle, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(rows)
+    return atomic_write_text(target, handle.getvalue())

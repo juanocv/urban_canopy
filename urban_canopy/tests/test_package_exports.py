@@ -18,17 +18,23 @@ def test_model_factory_import_keeps_backends_lazy():
     assert callable(build_segmenter)
 
 
-def test_valid_pixel_mask_helpers():
-    import numpy as np
+def test_adapter_modules_import_without_ml_dependencies():
+    import subprocess
+    import sys
+    import textwrap
 
-    from urban_canopy.io.image_io import valid_pixel_mask
-
-    valid = valid_pixel_mask((10, 10), exclude_bottom_px=3)
-    assert valid[:7].all()
-    assert not valid[7:].any()
-
-    extra = np.zeros((10, 10), bool)
-    extra[0, 0] = True
-    valid = valid_pixel_mask((10, 10), exclude_bottom_px=0, extra_invalid=extra)
-    assert not valid[0, 0]
-    assert valid.sum() == 99
+    script = textwrap.dedent("""
+        import builtins
+        real_import = builtins.__import__
+        blocked = ("torch", "torchvision", "transformers", "PIL", "detectron2")
+        def guarded(name, *args, **kwargs):
+            if name in blocked or name.startswith(tuple(item + "." for item in blocked)):
+                raise ModuleNotFoundError(name, name=name)
+            return real_import(name, *args, **kwargs)
+        builtins.__import__ = guarded
+        import urban_canopy.models.oneformer
+        import urban_canopy.models.mask2former
+        import urban_canopy.models.deeplab
+        import urban_canopy.models.detectron2
+        """)
+    subprocess.run([sys.executable, "-c", script], check=True)

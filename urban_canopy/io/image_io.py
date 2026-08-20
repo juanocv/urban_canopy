@@ -1,22 +1,13 @@
-"""
-Image loading and canopy visualisation helpers.
-
-``read_rgb`` is carried over from the sidewalk pipeline: it is the single place
-that guarantees every downstream stage sees H x W x 3 uint8 RGB, whatever the
-caller passed in. The overlays are new -- the old ones drew sidewalks and
-obstacle bases, which have no meaning here.
-"""
+"""Image decoding, explicit colour conversion and visualisation helpers."""
 
 from __future__ import annotations
 
 import base64
-import hashlib
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Iterable, Sequence, Union
 
 import cv2
 import numpy as np
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from urban_canopy.log import get_logger
 
@@ -24,11 +15,11 @@ logger = get_logger(__name__)
 
 __all__ = [
     "ImageLoadError",
+    "decode_rgb",
+    "ensure_rgb_u8",
+    "from_bgr_array",
     "read_rgb",
-    "get_exclude_bottom_px",
-    "valid_pixel_mask",
     "mask_overlay_bgr",
-    "instances_overlay_bgr",
     "png_b64",
 ]
 
@@ -36,38 +27,41 @@ TREE_COLOR_BGR = (0, 200, 0)
 VEGETATION_COLOR_BGR = (0, 190, 190)
 
 
-class Settings(BaseSettings):
-    """Image-loading defaults, overridable through UC_IMG_* variables."""
-
-    model_config = SettingsConfigDict(env_prefix="UC_IMG_", extra="ignore")
-
-    # Height in pixels of the Street View watermark strip at the bottom of the
-    # frame. Those pixels are excluded from the valid-pixel denominator so the
-    # watermark cannot dilute the coverage ratio. Keep it constant across a
-    # study: changing it changes every ratio.
-    exclude_bottom_px: int = 0
-
-
-_cfg = Settings()
-
-
-def get_exclude_bottom_px() -> int:
-    """Configured height of the excluded bottom strip, in pixels."""
-    return int(_cfg.exclude_bottom_px)
-
-
 class ImageLoadError(RuntimeError):
     """Raised when an image cannot be decoded."""
 
 
-def read_rgb(src: Union[str, Path, bytes, np.ndarray]) -> np.ndarray:
+def ensure_rgb_u8(rgb: np.ndarray, *, copy: bool = False) -> np.ndarray:
     """
-    Load an image and **always** return H x W x 3 uint8 RGB.
+    Validate the public in-memory image contract: non-empty H x W x 3 uint8 RGB.
 
-    Parameters
-    ----------
-    src
-        Path/str, raw encoded bytes, or an already-loaded BGR ndarray.
+    No colour conversion, dtype coercion or range scaling is performed. This is
+    deliberate: an ndarray carries no reliable metadata from which RGB versus
+    BGR can be inferred.
+    """
+    arr = np.asarray(rgb)
+    if arr.ndim != 3 or arr.shape[2] != 3:
+        raise ValueError(f"Expected an H x W x 3 RGB array, got shape {arr.shape}.")
+    if arr.dtype != np.uint8:
+        raise ValueError(f"Expected an uint8 RGB array, got dtype {arr.dtype}.")
+    if arr.shape[0] == 0 or arr.shape[1] == 0:
+        raise ValueError("Expected a non-empty RGB array.")
+    if copy:
+        return np.array(arr, dtype=np.uint8, order="C", copy=True)
+    return np.ascontiguousarray(arr)
+
+
+def from_bgr_array(bgr: np.ndarray) -> np.ndarray:
+    """Explicitly convert a non-empty H x W x 3 uint8 BGR array to RGB."""
+    # Reuse the same structural contract; the helper name, not array metadata,
+    # supplies the colour-space meaning.
+    validated = ensure_rgb_u8(bgr)
+    return cv2.cvtColor(validated, cv2.COLOR_BGR2RGB)
+
+
+def decode_rgb(src: str | Path | bytes) -> np.ndarray:
+    """
+    Decode an encoded path or byte string and return H x W x 3 uint8 RGB.
 
     Raises
     ------
@@ -83,44 +77,17 @@ def read_rgb(src: Union[str, Path, bytes, np.ndarray]) -> np.ndarray:
         if arr is None:
             raise ImageLoadError("OpenCV failed to decode in-memory bytes.")
     else:
-        arr = np.asarray(src)
-        if arr.ndim != 3 or arr.shape[2] != 3:
-            raise ImageLoadError(f"Expected an H x W x 3 array, got shape {arr.shape}.")
-        arr = arr.copy()
+        raise TypeError(
+            "decode_rgb accepts only a path or encoded bytes; use "
+            "ensure_rgb_u8() for RGB arrays or from_bgr_array() for BGR arrays."
+        )
 
-    return cv2.cvtColor(arr, cv2.COLOR_BGR2RGB)
+    return from_bgr_array(arr)
 
 
-def valid_pixel_mask(
-    shape: tuple[int, int],
-    *,
-    exclude_bottom_px: int | None = None,
-    extra_invalid: np.ndarray | None = None,
-) -> np.ndarray:
-    """
-    Boolean map of the pixels that count towards the coverage denominator.
-
-    The denominator is explicit rather than ``H * W`` because a Street View
-    frame carries a watermark strip that belongs to no scene class, and because
-    a caller may want to exclude a letterboxed border. Everything excluded here
-    is excluded from *both* numerator and denominator, so ratios stay in [0, 1].
-    """
-    height, width = int(shape[0]), int(shape[1])
-    valid = np.ones((height, width), dtype=bool)
-
-    bottom = get_exclude_bottom_px() if exclude_bottom_px is None else int(exclude_bottom_px)
-    if bottom > 0:
-        if bottom >= height:
-            raise ValueError(f"exclude_bottom_px={bottom} would drop the whole {height}px frame.")
-        valid[height - bottom :, :] = False
-
-    if extra_invalid is not None:
-        extra = np.asarray(extra_invalid).astype(bool)
-        if extra.shape != valid.shape:
-            raise ValueError(f"extra_invalid has shape {extra.shape}, expected {valid.shape}.")
-        valid &= ~extra
-
-    return valid
+def read_rgb(src: str | Path | bytes) -> np.ndarray:
+    """Backward-compatible name for :func:`decode_rgb`; arrays are not accepted."""
+    return decode_rgb(src)
 
 
 def mask_overlay_bgr(
@@ -132,7 +99,7 @@ def mask_overlay_bgr(
     outline: bool = True,
 ) -> np.ndarray:
     """Blend *mask* over *rgb* (RGB in, BGR out, ready for ``cv2.imwrite``)."""
-    bgr = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2BGR)
+    bgr = cv2.cvtColor(ensure_rgb_u8(rgb), cv2.COLOR_RGB2BGR)
     m = np.asarray(mask).astype(bool)
     if m.shape != bgr.shape[:2]:
         raise ValueError(f"Mask shape {m.shape} does not match image {bgr.shape[:2]}.")
@@ -151,50 +118,9 @@ def mask_overlay_bgr(
     return out
 
 
-def _color_for_index(index: int) -> tuple[int, int, int]:
-    # blake2b rather than hash(): str/int hashing is salted per process
-    # (PYTHONHASHSEED), which would recolour the same instance on every run.
-    digest = hashlib.blake2b(str(index).encode("utf-8"), digest_size=3).digest()
-    return tuple(50 + int(b) % 206 for b in digest)  # type: ignore[return-value]
-
-
-def instances_overlay_bgr(rgb: np.ndarray, instances: Iterable) -> np.ndarray:
-    """
-    Draw one colour per instance mask, with an index label at its centroid.
-
-    Instances are only ever drawn when a backend actually produced them, or
-    when the connected-component heuristic was explicitly requested; the caller
-    decides, this function just renders whatever list it is handed.
-    """
-    bgr = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2BGR)
-    out = bgr.copy()
-    for index, inst in enumerate(instances):
-        mask = np.asarray(getattr(inst, "mask", inst)).astype(bool)
-        if mask.shape != out.shape[:2] or not mask.any():
-            continue
-        color = _color_for_index(index)
-        out[mask] = (0.55 * out[mask] + 0.45 * np.asarray(color)).astype(np.uint8)
-        contours, _ = cv2.findContours(
-            mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-        cv2.drawContours(out, contours, -1, color, 2)
-        ys, xs = np.nonzero(mask)
-        cv2.putText(
-            out,
-            str(index),
-            (int(xs.mean()), int(ys.mean())),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (255, 255, 255),
-            1,
-            cv2.LINE_AA,
-        )
-    return out
-
-
 def png_b64(arr: np.ndarray) -> str:
     """PNG-encode a BGR/grayscale array and return it base64-encoded."""
     ok, buf = cv2.imencode(".png", arr)
     if not ok:  # pragma: no cover - cv2 only fails on malformed input
         raise ValueError("cv2.imencode failed to encode the array as PNG.")
-    return base64.b64encode(buf).decode()
+    return base64.b64encode(buf.tobytes()).decode()

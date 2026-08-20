@@ -1,11 +1,7 @@
 import numpy as np
 import pytest
 
-from urban_canopy.processing.aggregate import (
-    NO_CROSS_VIEW_ASSOCIATION_NOTE,
-    aggregate_values,
-    aggregate_views,
-)
+from urban_canopy.processing.aggregate import aggregate_values, aggregate_views
 
 
 def test_aggregate_values_robust_stats():
@@ -52,33 +48,13 @@ class _Capture:
 
 
 class _View:
-    def __init__(self, tree, veg=None, heading=0, instances=None, flags=()):
+    def __init__(self, tree, veg=None, heading=0, instances=None, flags=(), source="model"):
         self.coverage = _Coverage(tree, veg)
         self.capture = _Capture(heading)
         self.instances = instances
         self.instances_supported = instances is not None
-        self.instance_source = "model" if instances is not None else None
+        self.instance_source = source if instances is not None else None
         self.quality_flags = tuple(flags)
-
-
-def test_aggregate_views_never_sums_instance_counts():
-    views = [
-        _View(0.3, heading=0, instances=[object(), object()]),
-        _View(0.5, heading=90, instances=[object(), object(), object()]),
-    ]
-    aggregate = aggregate_views(views)
-    # Per-view counts are preserved; there is no "total" field anywhere.
-    assert aggregate.instance_counts == (2, 3)
-    payload = aggregate.to_dict()
-    assert payload["instance_counts_per_view"] == [2, 3]
-    assert "total_instances" not in payload
-    assert NO_CROSS_VIEW_ASSOCIATION_NOTE in aggregate.notes
-
-
-def test_aggregate_views_mixed_instance_support():
-    views = [_View(0.3, instances=None), _View(0.5, instances=[object()])]
-    aggregate = aggregate_views(views)
-    assert aggregate.instance_counts == (None, 1)
 
 
 def test_aggregate_views_collects_quality_flags_and_headings():

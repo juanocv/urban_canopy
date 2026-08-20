@@ -1,7 +1,7 @@
-# Urban Canopy
+# Urban Tree Coverage
 
-Urban Canopy estimates the **visible tree-canopy coverage** of urban streets from
-Google Street View imagery, using semantic/panoptic/instance segmentation. The
+Urban Tree Coverage estimates the **visible tree coverage** of urban streets from
+Google Street View imagery, using semantic and panoptic segmentation. The
 production package lives in `urban_canopy/`; third-party model checkouts
 (OneFormer via HuggingFace, Detectron2, DeepLab) stay outside the package
 boundary.
@@ -9,7 +9,7 @@ boundary.
 The primary indicator is continuous and per image:
 
 ```
-tree_coverage_ratio = tree pixels / valid pixels          (in [0, 1])
+tree_coverage_ratio = tree pixels / all image pixels      (in [0, 1])
 tree_coverage_pct   = 100 * tree_coverage_ratio
 ```
 
@@ -27,31 +27,29 @@ medium / high greenery") are produced: the continuous ratio is the output.
    (reference heading + offsets, or equiangular sampling). Heading selection is
    configuration-driven and independent of the segmentation output.
 3. **Segmentation** — OneFormer (ADE20K), Mask2Former (ADE20K, COCO or
-   Cityscapes), Detectron2 (COCO-panoptic, or a custom instance model), DeepLab
+   Cityscapes), Detectron2 (COCO-panoptic), DeepLab
    (Cityscapes), behind one common contract.
-4. **Refinement** — conservative, optional cleanup of the canopy mask (speck
+4. **Refinement** — conservative, optional cleanup of the tree coverage mask (speck
    removal, small-hole filling), with a growth guard that prevents any setting
    from inflating the mask by more than a configured fraction.
 5. **Indicators** — coverage ratios per image, with quality flags and full
    capture provenance.
 6. **Aggregation** — mean / median / IQR / p25 / p75 across the views of a
-   location. Instance counts stay per view and are never summed across views.
-7. **Evaluation** — three independent levels against manual COCO ground truth:
-   pixels (IoU, Dice/F1, precision, recall), instances (TP/FP/FN, precision,
-   recall, F1, mean matched IoU, AP50/AP50:95 when scores exist), and the
-   coverage indicator itself (MAE, RMSE, bias in percentage points).
+   location.
+7. **Evaluation** — two independent levels against manual COCO ground truth:
+   pixels (IoU, Dice/F1, precision, recall) and the coverage indicator itself
+   (MAE, RMSE, bias in percentage points).
 8. **Audit artifacts** — per view: RGB, raw mask, refined mask, overlays,
-   instance visualisation, metrics JSON; plus CSV/JSON exports per run.
+   metrics JSON; plus CSV/JSON exports per run.
 
 ### What the backends can and cannot claim
 
-| Backend | Pretraining | Tree class | Individual trees? |
-|---|---|---|---|
-| OneFormer | ADE20K-150 | `tree` (stuff) + `palm` | No — coverage only |
-| Mask2Former | ADE20K / COCO / Cityscapes | depends on the checkpoint | No — coverage only |
-| Detectron2 panoptic FPN | COCO-panoptic 133 | `tree-merged` (stuff) | No — coverage only |
-| Detectron2 Mask R-CNN (custom weights) | your fine-tune | your `tree` thing class | **Yes** — masks + scores |
-| DeepLab V3+ | Cityscapes-19 | none (`vegetation` merges trees+bushes) | No — and no tree ratio unless `--allow-vegetation-proxy` |
+| Backend | Pretraining | Tree class |
+|---|---|---|
+| OneFormer | ADE20K-150 | `tree` (stuff) + `palm` |
+| Mask2Former | ADE20K / COCO / Cityscapes | depends on the checkpoint |
+| Detectron2 panoptic FPN | COCO-panoptic 133 | `tree-merged` (stuff) |
+| DeepLab V3+ | Cityscapes-19 | none (`vegetation` merges trees+bushes); no tree ratio unless `--allow-vegetation-proxy` |
 
 Mask2Former is the one backend published for **several class spaces**, so it can
 hold the architecture fixed and vary the label set — which separates "the model
@@ -71,10 +69,24 @@ That last line is the point: the same architecture reports no tree ratio when
 pointed at a class space that cannot express one, rather than quietly returning
 the vegetation number.
 
-Splitting a semantic mask into connected components is available as an
-**explicitly flagged heuristic** (`--instances heuristic`), not as instance
-segmentation: touching crowns merge, occluded crowns split, and the counts say
-so in every output.
+### Why there are no individual-tree metrics
+
+This project measures **area, never counts**. That is a finding, not a
+simplification: no published checkpoint for any class space here carries tree as
+a *thing* class. COCO-80 has only `potted plant`, COCO-panoptic's `tree-merged`
+is stuff, LVIS v1's 1203 categories contain only `Christmas_tree`, and
+Cityscapes-instance has eight person/vehicle classes. The ADE20K instance set
+(100 things) has `palm` and `flower` but not `tree`. Every downloadable tree
+instance-segmentation model — detectree2, DeepForest, `restor/tcd-mask-rcnn-r50`
+— is trained on **overhead** aerial imagery, where crowns are separated blobs;
+from the street they overlap and occlude, and the recent work that tackles that
+does not release weights.
+
+So a per-instance metric could only ever have been computed against a model that
+does not exist. Individual-tree support was removed rather than left as an
+unreachable code path. The ground truth is still annotated one tree at a time —
+that is what Roboflow produces — and those instances are unioned into the
+semantic mask everything is scored against.
 
 ## Repository layout
 
@@ -83,7 +95,7 @@ urban_canopy/              Python package used by the CLI and API
 urban_canopy/core/         Pipeline orchestration, config, results, view plans
 urban_canopy/io/           Street View, image and geospatial I/O, artifacts
 urban_canopy/models/       Backend adapters, taxonomy, factory
-urban_canopy/processing/   Coverage, refinement, aggregation, instance heuristic
+urban_canopy/processing/   Coverage, refinement, multi-view aggregation
 urban_canopy/evaluation/   COCO ground truth, metrics, prediction interchange
 urban_canopy/tests/        Offline, CPU-only unit tests
 docs/                      Architecture, annotation protocol, evaluation method
@@ -93,7 +105,7 @@ samples/images/            Small curated image set for trying the pipeline
 
 ## Trying it without an API key
 
-`samples/images/` holds seven curated frames spanning 0% to 40% canopy —
+`samples/images/` holds seven curated frames spanning 0% to 40% tree coverage —
 including a no-trees negative case and a four-heading sweep of one location.
 `notebooks/` walks through them:
 
@@ -106,7 +118,7 @@ jupyter lab notebooks/
   end to end: the indicator, the tree/vegetation split, raw vs refined masks,
   and the refinement growth guard.
 - [`02_multiview_and_evaluation.ipynb`](notebooks/02_multiview_and_evaluation.ipynb)
-  — multi-view aggregation and the three evaluation levels.
+  — multi-view aggregation and the two evaluation levels.
 
 ## Setup
 
@@ -133,8 +145,9 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-The base install is enough for the unit tests and package imports. Running real
-segmentation needs the ML layer:
+The base install is enough for the unit tests and package imports: adapter
+modules keep Torch, Transformers, Pillow, Torchvision and Detectron2 imports at
+construction time. Running real segmentation needs the ML layer:
 
 ```bash
 python -m pip install -e ".[ml]"
@@ -228,6 +241,11 @@ Address, multi-view with a known street bearing:
 tree-ai "Av. Paulista 1578, Sao Paulo" --multi-view --reference-heading 45 --offsets 90,270
 ```
 
+Multi-view requires at least one usable heading by default. Set a stricter
+study rule with `--min-successful-views N`; failed headings are returned with
+their stage (`fetch` or `analysis`) and error type instead of disappearing into
+the logs.
+
 Export everything an evaluation or audit needs — one flag, everything lands in
 this run's directory:
 
@@ -248,7 +266,7 @@ artifacts_out/
     predictions.json    for `tree-ai evaluate`
     views/
       000_street/       rgb.png  mask_raw.png  mask_refined.png
-                        overlay_tree.png  instances.png  metrics.json
+                        overlay_tree.png  metrics.json
       001_...           further views, in acquisition order
 ```
 
@@ -256,6 +274,10 @@ artifacts_out/
 asking for one piece on its own — `--csv` alone writes the rows and no images,
 which is what a large batch usually wants — and any of them accepts an explicit
 path (`--csv results.csv`) to place that file elsewhere.
+
+Local-image batches are consumed as an iterator. RGB is disabled unless image
+artifacts are requested; when requested, each view is written immediately and
+its RGB allocation is released before the next result accumulates.
 
 Runs accumulate instead of overwriting, so analysing one image with OneFormer
 and then with Detectron2 leaves both results side by side — which is the whole
@@ -279,15 +301,21 @@ Knobs worth knowing:
 
 - `--no-refine` feeds the raw segmenter mask downstream (the comparison
   baseline every refinement experiment should report against).
-- `--instances heuristic` derives connected components from the semantic mask;
-  results carry the `instances_are_heuristic` flag.
 - `--allow-vegetation-proxy` lets DeepLab's `vegetation` class stand in for
   trees; results carry `tree_from_vegetation_proxy` and
   `tree_source="vegetation_proxy"`.
-- `--exclude-bottom-px N` removes the Street View watermark strip from **both**
-  numerator and denominator of the ratio. Keep it constant across a study.
 - `--view-mode offsets|equiangular|fixed` with `--offsets`, `--n-views` or
   `--headings` controls the multi-view plan deterministically.
+- `--min-successful-views N` aborts a multi-view run that produced too little
+  imagery for the study protocol.
+- DeepLab loads weights-only checkpoints by default. The upstream VainF
+  checkpoints need Python pickle, so they require `--trust-checkpoint` (or
+  `UC_TRUST_CHECKPOINT=1` once, in `.env`); use it only for a file you trust,
+  since pickle can execute code while loading.
+- Successful DeepLab runs record the checkpoint SHA-256 in the manifest.
+- `--deterministic` additionally requests deterministic Torch/CUDA algorithms.
+  This is stricter than `--seed`, but the manifest deliberately does not claim
+  bitwise identity across different hardware or library versions.
 
 ## Web API
 
@@ -296,9 +324,16 @@ python -m pip install -e ".[api,ml]"
 uvicorn urban_canopy.webapi:app --host 127.0.0.1 --port 8000
 ```
 
+The API reads the same backend settings as the CLI from `.env`: `UC_SEG_BACKEND`,
+`UC_SEG_MODEL`, `UC_DEVICE`, `UC_TAXONOMY`, the `UC_D2_*` pair and the
+`UC_DEEPLAB_*` values shown in `.env.example`. Invalid or incomplete backend
+configuration aborts startup before the server reports readiness.
+
 `POST /analyse/single` and `POST /analyse/multi` return the coverage metrics
-(with optional base64 overlays on `/single`); `GET /ping` is a liveness probe.
-Interactive docs at `/docs`. Dataset evaluation stays in the CLI.
+(with optional base64 overlays on `/single`) plus backend/checkpoint/taxonomy
+provenance. `GET /ping` is a liveness probe; `GET /ready` confirms model startup
+and returns the same provenance, including a SHA-256 when weights are local.
+Interactive docs are at `/docs`. Dataset evaluation stays in the CLI.
 
 The API has no authentication and calls a paid Google API on every request —
 keep it behind a proxy or bound to localhost.
@@ -306,8 +341,9 @@ keep it behind a proxy or bound to localhost.
 ## Ground truth and evaluation
 
 Labelling happens in Roboflow, exported as **COCO Instance Segmentation**, one
-polygon/mask per tree. The pixel-level ground truth is the union of the
-instances, so the two levels can never disagree about what a tree pixel is.
+polygon/mask per tree. The pixel-level ground truth is their union: annotating
+per tree is what the tool produces, and unioning beats drawing the same pixels a
+second time, since two separately drawn ground truths would disagree.
 
 - Annotation policy (what counts as a tree, crowns vs trunks, occlusions,
   partial trees, minimum visibility): [`docs/annotation_protocol.md`](docs/annotation_protocol.md)
@@ -319,17 +355,32 @@ instances, so the two levels can never disagree about what a tree pixel is.
   [`docs/architecture.md`](docs/architecture.md)
 
 Every prediction file embeds a manifest (package versions, model name, device,
-taxonomy, refinement config, seed), so any reported number can be traced to the
-run that produced it.
+taxonomy, refinement config, RNG seed and deterministic-runtime flags), so any
+reported number can be traced to the run that produced it.
 
 ## Quality checks
 
 ```bash
 python -m compileall urban_canopy -q
-python -m pytest
+python -m pytest --cov=urban_canopy --cov-report=term-missing \
+  --cov-report=json:coverage.json --cov-fail-under=80
 python -m ruff check urban_canopy
 python -m black --check urban_canopy
+python -m pyright
+python scripts/check_coverage.py coverage.json --fail-under 60
 ```
+
+The test command enforces 80% aggregate branch coverage and writes a per-module
+JSON report; the second coverage gate prevents any measured production module
+from falling below 60%. Hypothesis exercises RLE, mask/coverage, aggregation and
+geographic invariants. Ruff enables bugbear, import sorting, modernization,
+simplification and NumPy-specific rules in addition to fatal errors and undefined
+names. Pyright checks the dependency-light public scientific contracts.
+
+The normal CI tests Python 3.10 and 3.13. A weekly dependency-compatibility
+workflow separately installs the declared minimum dependency set and the latest
+compatible releases, so lower bounds and upstream updates are both executable
+claims rather than untested metadata.
 
 Or all of them at once:
 
@@ -346,12 +397,12 @@ heavyweight tests under one of those markers.
 ## Citation
 
 ```bibtex
-@misc{urban_canopy_2026,
+@misc{urban_tree_coverage_2026,
   author = {Juan Oliveira de Carvalho},
-  title = {Urban Canopy: Visible Street-Level Tree Coverage from Street View Imagery Using Semantic Segmentation},
+  title = {Urban Tree Coverage: Visible Street-Level Tree Coverage from Street View Imagery Using Semantic Segmentation},
   year = {2026},
   publisher = {GitHub},
   journal = {GitHub repository},
-  url = {https://github.com/juanocv/urban_canopy}
+  url = {https://github.com/juanocv/urban_tree_coverage}
 }
 ```

@@ -12,7 +12,15 @@ Main entry points
 
 from importlib import import_module
 from types import ModuleType
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from urban_canopy.core.config import CanopyConfig
+    from urban_canopy.core.pipeline import CanopyPipeline
+    from urban_canopy.core.viewplan import ViewPlanConfig
+    from urban_canopy.io.streetview import StreetViewClient
+    from urban_canopy.models.factory import build_segmenter
+    from urban_canopy.processing.refinement import RefinementConfig
 
 __all__ = [
     "CanopyPipeline",

@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 
 from urban_canopy.core.config import CanopyConfig
-from urban_canopy.core.pipeline import CanopyPipeline
-from urban_canopy.core.results import QualityFlag
+from urban_canopy.core.pipeline import CanopyPipeline, MultiViewAnalysisError
+from urban_canopy.core.results import CaptureParams, QualityFlag
 from urban_canopy.core.viewplan import ViewPlanConfig
 from urban_canopy.io.streetview import Settings, StreetViewClient
 from urban_canopy.models.base import SegmentationOutput
@@ -20,7 +20,6 @@ class StubSegmenter:
     backend_name = "stub"
     class_space = "ade20k"
     taxonomy = ADE20K
-    supports_tree_instances = False
 
     def segment(self, img_rgb):
         height, width = img_rgb.shape[:2]
@@ -33,7 +32,6 @@ class StubSegmenter:
             class_space=self.class_space,
             taxonomy=self.taxonomy,
             group_masks={"tree": tree, "grass": grass, "plant_shrub": np.zeros_like(tree)},
-            supports_tree_instances=False,
         )
 
 
@@ -43,7 +41,6 @@ class NoTreeClassSegmenter:
     backend_name = "stub-cityscapes"
     class_space = "cityscapes"
     taxonomy = CITYSCAPES
-    supports_tree_instances = False
 
     def segment(self, img_rgb):
         height, width = img_rgb.shape[:2]
@@ -54,7 +51,6 @@ class NoTreeClassSegmenter:
             class_space=self.class_space,
             taxonomy=self.taxonomy,
             group_masks={"vegetation": veg, "terrain": np.zeros_like(veg)},
-            supports_tree_instances=False,
         )
 
 
@@ -72,7 +68,30 @@ def test_single_view_local_image(tmp_path):
     assert result.coverage.tree_source == "tree_class"
     assert result.capture.source == "local"
     assert result.raw_mask.shape == (80, 120)
-    assert result.instances is None  # auto mode, backend has none
+
+
+def test_analyse_rgb_array_preserves_channel_order():
+    class RecordingSegmenter(StubSegmenter):
+        received = None
+
+        def segment(self, img_rgb):
+            self.received = img_rgb.copy()
+            return super().segment(img_rgb)
+
+    segmenter = RecordingSegmenter()
+    rgb = np.array([[[230, 20, 10], [40, 50, 60]]], dtype=np.uint8)
+    CanopyPipeline(segmenter=segmenter).analyse_rgb_array(
+        rgb, capture=CaptureParams(source="local")
+    )
+    np.testing.assert_array_equal(segmenter.received, rgb)
+
+
+def test_analyse_rgb_array_rejects_non_uint8():
+    with pytest.raises(ValueError, match="uint8"):
+        CanopyPipeline(segmenter=StubSegmenter()).analyse_rgb_array(
+            np.zeros((2, 2, 3), dtype=np.float32),
+            capture=CaptureParams(source="local"),
+        )
 
 
 def test_no_tree_class_without_proxy_is_flagged(tmp_path):
@@ -82,6 +101,17 @@ def test_no_tree_class_without_proxy_is_flagged(tmp_path):
     assert QualityFlag.TREE_UNAVAILABLE in result.quality_flags
     # Vegetation is still reported.
     assert result.coverage.vegetation_coverage_ratio == pytest.approx(0.25)
+
+
+def test_unavailable_tree_class_exports_no_semantic_mask(tmp_path):
+    from urban_canopy.evaluation.predictions import build_predictions
+
+    result = CanopyPipeline(segmenter=NoTreeClassSegmenter()).analyse_image(_image(tmp_path))
+    record = build_predictions([result])["images"][0]
+
+    assert record["tree_source"] == "unavailable"
+    assert record["mask_status"] == "unavailable"
+    assert record["mask"] is None
 
 
 def test_no_tree_class_with_proxy_is_flagged_differently(tmp_path):
@@ -105,33 +135,25 @@ def test_refinement_disabled_keeps_raw_mask(tmp_path):
     assert QualityFlag.REFINEMENT_DISABLED in result.quality_flags
 
 
-def test_heuristic_instances_are_flagged(tmp_path):
-    pipe = CanopyPipeline(
-        segmenter=StubSegmenter(),
-        config=CanopyConfig(instance_mode="heuristic"),
-    )
+def test_complete_frame_is_the_coverage_denominator(tmp_path):
+    pipe = CanopyPipeline(segmenter=StubSegmenter())
     result = pipe.analyse_image(_image(tmp_path))
-    assert result.instances is not None
-    assert len(result.instances) == 1  # one connected quadrant
-    assert result.instance_source == "connected_components_heuristic"
-    assert QualityFlag.HEURISTIC_INSTANCES in result.quality_flags
-    # The backend still reports that it cannot do real instances.
-    assert result.instances_supported is False
+    assert result.coverage.valid_pixels == 80 * 120
+    assert result.coverage.total_pixels == 80 * 120
+    assert result.coverage.tree_coverage_ratio == pytest.approx(0.25)
 
 
-def test_instance_mode_none(tmp_path):
-    pipe = CanopyPipeline(segmenter=StubSegmenter(), config=CanopyConfig(instance_mode="none"))
-    result = pipe.analyse_image(_image(tmp_path))
-    assert result.instances is None
+class WrongShapeSegmenter(StubSegmenter):
+    def segment(self, img_rgb):
+        output = super().segment(img_rgb)
+        output.group_masks["tree"] = output.group_masks["tree"][:1, :]
+        return output
 
 
-def test_exclude_bottom_px_changes_denominator(tmp_path):
-    pipe = CanopyPipeline(segmenter=StubSegmenter(), config=CanopyConfig(exclude_bottom_px=20))
-    result = pipe.analyse_image(_image(tmp_path))
-    # 80x120 frame, bottom 20 rows excluded -> 60*120 = 7200 valid; the tree
-    # quadrant (40x60 = 2400 px) sits fully inside the valid region.
-    assert result.coverage.valid_pixels == (80 - 20) * 120
-    assert result.coverage.tree_coverage_ratio == pytest.approx(2400 / 7200)
+def test_pipeline_rejects_backend_masks_with_the_wrong_shape(tmp_path):
+    pipe = CanopyPipeline(segmenter=WrongShapeSegmenter())
+    with pytest.raises(ValueError, match="shape"):
+        pipe.analyse_image(_image(tmp_path))
 
 
 def _stubbed_streetview(tmp_path, monkeypatch):
@@ -181,12 +203,76 @@ def test_multiview_counts_failed_headings(tmp_path, monkeypatch):
     assert len(result.views) == 2
     assert result.aggregate.tree_coverage.n_views == 3
     assert result.aggregate.tree_coverage.n_valid_views == 2
+    assert [failure.to_dict() for failure in result.failures] == [
+        {
+            "heading": 90,
+            "stage": "fetch",
+            "error_type": "RuntimeError",
+            "message": "no imagery here",
+        }
+    ]
+
+
+def test_multiview_raises_when_every_heading_fails(tmp_path, monkeypatch):
+    client = _stubbed_streetview(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        StreetViewClient,
+        "fetch",
+        lambda self, req: (_ for _ in ()).throw(RuntimeError("quota unavailable")),
+    )
+    pipe = CanopyPipeline(segmenter=StubSegmenter(), streetview=client)
+
+    with pytest.raises(MultiViewAnalysisError) as excinfo:
+        pipe.analyse_multiview(
+            -23.0,
+            -46.0,
+            plan=ViewPlanConfig(mode="offsets", offsets=(0, 90)),
+        )
+
+    error = excinfo.value
+    assert error.successful_headings == ()
+    assert [failure.heading for failure in error.failures] == [0, 90]
+    assert {failure.stage for failure in error.failures} == {"fetch"}
+
+
+def test_multiview_enforces_configured_minimum(tmp_path, monkeypatch):
+    client = _stubbed_streetview(tmp_path, monkeypatch)
+
+    def one_success(self, req):
+        if req.heading != 0:
+            raise RuntimeError("missing")
+        return _image(tmp_path, "sv.jpg")
+
+    monkeypatch.setattr(StreetViewClient, "fetch", one_success)
+    pipe = CanopyPipeline(segmenter=StubSegmenter(), streetview=client)
+    plan = ViewPlanConfig(
+        mode="offsets",
+        offsets=(0, 90, 180),
+        min_successful_views=2,
+    )
+    with pytest.raises(MultiViewAnalysisError, match="at least 2"):
+        pipe.analyse_multiview(-23.0, -46.0, plan=plan)
 
 
 def test_coords_analysis_needs_a_client(tmp_path):
     pipe = CanopyPipeline(segmenter=StubSegmenter())
     with pytest.raises(RuntimeError, match="StreetViewClient"):
         pipe.analyse_coords(-23.0, -46.0)
+
+
+def test_local_batch_iterator_is_lazy(monkeypatch):
+    pipe = CanopyPipeline(segmenter=StubSegmenter())
+    calls = []
+
+    def analyse(path):
+        calls.append(path)
+        return path
+
+    monkeypatch.setattr(pipe, "analyse_image", analyse)
+    results = pipe.iter_analyse_images(["a.jpg", "b.jpg"])
+    assert calls == []
+    assert next(results) == "a.jpg"
+    assert calls == ["a.jpg"]
 
 
 def test_address_records_the_address(tmp_path, monkeypatch):

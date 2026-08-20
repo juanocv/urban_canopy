@@ -5,12 +5,13 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import importlib.util
-import json
 import os
 import platform
 import sys
 from dataclasses import asdict, dataclass
 from typing import Any
+
+from urban_canopy.io.json_io import json_dumps
 
 CORE_PACKAGES = [
     "joblib",
@@ -85,14 +86,21 @@ def collect_diagnostics() -> dict[str, Any]:
     env_keys = [
         "GOOGLE_API_KEY",
         "UC_SEG_BACKEND",
+        "UC_SEG_MODEL",
+        "UC_SEG_TASK",
+        "UC_DEVICE",
+        "UC_TAXONOMY",
+        "UC_D2_CONFIG",
+        "UC_D2_WEIGHTS",
+        "UC_D2_SCORE_THRESH",
         "UC_DEEPLAB_CKPT",
         "UC_DEEPLAB_REPO",
         "UC_DEEPLAB_MODEL",
+        "UC_TRUST_CHECKPOINT",
         "UC_DEBUG",
         "UC_LOG_LEVEL",
         "UC_LOG_FORMAT",
         "UC_LOG_FILE",
-        "UC_IMG_EXCLUDE_BOTTOM_PX",
         "CUDA_HOME",
     ]
     env = {
@@ -165,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
 
     report = collect_diagnostics()
     if args.json:
-        print(json.dumps(report, indent=2, ensure_ascii=False, default=str))
+        print(json_dumps(report, indent=2))
     else:
         _print_text(report)
     return 0

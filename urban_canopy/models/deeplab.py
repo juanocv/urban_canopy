@@ -3,7 +3,7 @@ DeepLabV3+ adapter (VainF's Cityscapes checkpoints).
 
 Class-space audit: Cityscapes-19 has **no tree class**. ``vegetation`` (trainId
 8) merges trees with bushes and hedges, and ``terrain`` (9) merges grass with
-soil and sand. Output is semantic only -- no panoptic map, no instances.
+soil and sand. Output is semantic only -- no panoptic map.
 
 So this backend cannot answer "how much of the frame is tree". It answers "how
 much is woody vegetation", which is a different and wider quantity. The adapter
@@ -16,75 +16,29 @@ MobileNet checkpoint, against tens of seconds for OneFormer).
 
 from __future__ import annotations
 
+import hashlib
 import sys
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import numpy as np
-import torch
-from PIL import Image
-from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from torchvision import transforms
 
 from urban_canopy.log import get_logger
+from urban_canopy.validation import MAX_IMAGE_DIMENSION, validate_int_range
 
 from .base import Segment, SegmentationOutput, build_group_masks
-from .taxonomy import Taxonomy, default_taxonomy
+from .taxonomy import Taxonomy, default_taxonomy, validate_taxonomy_class_space
 
 logger = get_logger(__name__)
 
 
-class Settings(BaseSettings):
-    """
-    Standing defaults for the DeepLab backend, from ``UC_DEEPLAB_*`` or ``.env``.
-
-    The checkpoint and the code checkout are properties of a machine, not of a
-    run: they sit at the same path for weeks while every other flag changes. Set
-    them once here and ``--ckpt`` / ``--deeplab-repo`` become optional, still
-    overriding when passed.
-    """
-
-    model_config = SettingsConfigDict(
-        env_prefix="UC_DEEPLAB_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
-
-    #: Path to a Cityscapes .pth checkpoint.
-    ckpt: Path | None = None
-    #: Path to a VainF DeepLabV3Plus-Pytorch checkout (the folder holding network/).
-    repo: Path | None = None
-    #: Entry point in network.modeling; None infers it from the checkpoint name.
-    model: str | None = None
-
-    @field_validator("ckpt", "repo", "model", mode="before")
-    @classmethod
-    def _blank_is_unset(cls, value):
-        """
-        Treat an empty value as "not configured".
-
-        ``.env.example`` ships these keys empty so they are discoverable, and
-        copying it to ``.env`` is the documented first step. Without this,
-        ``UC_DEEPLAB_CKPT=`` would parse as ``Path('.')`` -- a configured
-        checkpoint pointing at the current directory -- and the run would fail
-        with a puzzling "checkpoint does not exist: ." instead of the message
-        that says a checkpoint is needed.
-        """
-        if isinstance(value, str) and not value.strip():
-            return None
-        return value
-
-
-def get_settings() -> Settings:
-    """
-    Read the DeepLab defaults.
-
-    Constructed per call rather than cached at import time so a test or a caller
-    that adjusts the environment is not fighting a value frozen when the module
-    first loaded.
-    """
-    return Settings()
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 CITYSCAPES_LABELS = {
@@ -113,11 +67,9 @@ CITYSCAPES_LABELS = {
 class DeepLabSegmenter:
     """Semantic vegetation segmentation through a loaded DeepLab model."""
 
-    supports_tree_instances = False
-
     def __init__(
         self,
-        dl_model: torch.nn.Module,
+        dl_model: Any,
         *,
         taxonomy: Taxonomy | None = None,
         device: str | None = None,
@@ -125,7 +77,29 @@ class DeepLabSegmenter:
     ) -> None:
         self.backend_name = "deeplab"
         self.class_space = "cityscapes"
-        self.taxonomy = taxonomy or default_taxonomy(self.class_space)
+        self.model_name = getattr(dl_model, "_urban_canopy_model_name", None)
+        self.checkpoint_sha256 = getattr(dl_model, "_urban_canopy_checkpoint_sha256", None)
+        self.taxonomy = validate_taxonomy_class_space(
+            taxonomy or default_taxonomy(self.class_space),
+            self.class_space,
+            context="DeepLab Cityscapes checkpoint",
+        )
+        if len(input_size) != 2:
+            raise ValueError("input_size must be a (height, width) pair.")
+        for name, value in zip(("input height", "input width"), input_size, strict=True):
+            validate_int_range(
+                value,
+                name=name,
+                minimum=1,
+                maximum=MAX_IMAGE_DIMENSION,
+            )
+
+        import torch
+        from PIL import Image
+        from torchvision import transforms
+
+        self._torch = torch
+        self._Image = Image
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.model = dl_model.to(self.device).eval()
         self.id2label = dict(CITYSCAPES_LABELS)
@@ -137,12 +111,15 @@ class DeepLabSegmenter:
             ]
         )
 
-    @torch.inference_mode()
     def segment(self, img_rgb: np.ndarray) -> SegmentationOutput:
+        with self._torch.inference_mode():
+            return self._segment(img_rgb)
+
+    def _segment(self, img_rgb: np.ndarray) -> SegmentationOutput:
         img = np.asarray(img_rgb)
         height, width = img.shape[:2]
 
-        tensor = self.transform(Image.fromarray(img)).unsqueeze(0).to(self.device)
+        tensor = self.transform(self._Image.fromarray(img)).unsqueeze(0).to(self.device)
         out = self.model(tensor)
         if isinstance(out, dict):
             logits = out.get("out", next(iter(out.values())))
@@ -154,7 +131,9 @@ class DeepLabSegmenter:
         pred = logits.softmax(1).argmax(1).squeeze(0).cpu().numpy().astype(np.int32)
         if pred.shape != (height, width):
             pred = np.array(
-                Image.fromarray(pred.astype("uint8")).resize((width, height), Image.NEAREST)
+                self._Image.fromarray(pred.astype("uint8")).resize(
+                    (width, height), self._Image.NEAREST
+                )
             ).astype(np.int32)
 
         segments: list[Segment] = []
@@ -171,8 +150,6 @@ class DeepLabSegmenter:
             group_masks=build_group_masks(self.taxonomy, labelled, (height, width)),
             label_map=pred,
             segments=segments,
-            instances=None,
-            supports_tree_instances=False,
             notes=(
                 "Cityscapes has no tree class: 'vegetation' merges trees with bushes "
                 "and hedges. Tree coverage is unavailable unless the vegetation proxy "
@@ -263,11 +240,13 @@ def load_deeplab_checkpoint(
     num_classes: int = 19,
     output_stride: int = 16,
     device: str | None = None,
-    allow_pickle: bool = True,
+    allow_pickle: bool = False,
     repo_path: str | Path | None = None,
-) -> torch.nn.Module:
+) -> Any:
     """Load a DeepLabV3+ checkpoint into the architecture it belongs to."""
     import pickle
+
+    import torch
 
     ckpt = Path(ckpt_path).expanduser()
     if not ckpt.exists():
@@ -280,19 +259,36 @@ def load_deeplab_checkpoint(
     model = modeling.__dict__[model_name](num_classes=num_classes, output_stride=output_stride)
 
     try:
-        raw = torch.load(ckpt, map_location="cpu")
+        # Explicit on every supported Torch version: relying on Torch's changing
+        # default would make allow_pickle=False unsafe on older installations.
+        raw = torch.load(ckpt, map_location="cpu", weights_only=True)
     except pickle.UnpicklingError as exc:
         if not allow_pickle:
             raise ValueError(
-                "Failed to load checkpoint with pickle disabled. "
-                "Set allow_pickle=True to enable it."
+                "This checkpoint requires Python pickle, which can execute code while "
+                "loading. Use a weights-only checkpoint, or pass --trust-checkpoint "
+                "(allow_pickle=True in Python) only if you trust its source."
             ) from exc
+        logger.warning("Loading trusted legacy checkpoint %s with pickle enabled", ckpt)
         raw = torch.load(ckpt, map_location="cpu", weights_only=False)
 
-    state = raw.get("model_state") or raw.get("state_dict") or raw
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"Checkpoint {ckpt.name!r} did not contain a mapping of tensor weights.")
+    if "model_state" in raw:
+        state = raw["model_state"]
+    elif "state_dict" in raw:
+        state = raw["state_dict"]
+    else:
+        state = raw
+    if not isinstance(state, Mapping):
+        raise ValueError(
+            f"Checkpoint {ckpt.name!r} has a state entry that is not a tensor mapping."
+        )
     model_keys = model.state_dict()
     filtered = {
-        k: v for k, v in state.items() if (k in model_keys) and (v.shape == model_keys[k].shape)
+        k: v
+        for k, v in state.items()
+        if (k in model_keys) and hasattr(v, "shape") and (v.shape == model_keys[k].shape)
     }
 
     # A mismatched backbone still matches a handful of tensors -- a mobilenet
@@ -311,5 +307,10 @@ def load_deeplab_checkpoint(
         )
 
     model.load_state_dict(filtered, strict=False)
+    # Keep immutable provenance with the loaded object. The adapter copies these
+    # values into the run manifest; the path itself is deliberately omitted
+    # because it is machine-specific and may reveal local directory names.
+    model._urban_canopy_model_name = model_name
+    model._urban_canopy_checkpoint_sha256 = _sha256_file(ckpt)
     target = device or ("cuda" if torch.cuda.is_available() else "cpu")
     return model.to(target).eval()

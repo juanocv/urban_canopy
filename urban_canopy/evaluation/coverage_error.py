@@ -14,8 +14,9 @@ is wrong by a factor of two; correlation cannot substitute for error.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -88,7 +89,7 @@ def evaluate_coverage(
                 "error_pp": float(p - g),
                 "abs_error_pp": float(abs(p - g)),
             }
-            for name, p, g in zip(names, pred, gt)
+            for name, p, g in zip(names, pred, gt, strict=True)
         ]
 
     return CoverageErrorReport(

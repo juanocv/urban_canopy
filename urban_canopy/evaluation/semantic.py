@@ -16,8 +16,9 @@ with the count of images that contributed.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -37,7 +38,7 @@ class BinaryConfusion:
     fn: int
     tn: int
 
-    def __add__(self, other: "BinaryConfusion") -> "BinaryConfusion":
+    def __add__(self, other: BinaryConfusion) -> BinaryConfusion:
         return BinaryConfusion(
             tp=self.tp + other.tp,
             fp=self.fp + other.fp,
@@ -93,9 +94,8 @@ def binary_confusion(
     """
     Confusion counts between a predicted and an annotated mask.
 
-    *valid_mask* restricts the comparison to the pixels the prediction was
-    measured over, so the excluded watermark strip does not inflate the true
-    negatives (and with them any accuracy computed from them).
+    *valid_mask* is available for generic metric use. The Urban Canopy runner
+    passes ``None`` and evaluates the complete image.
     """
     p = np.asarray(pred).astype(bool)
     g = np.asarray(gt).astype(bool)

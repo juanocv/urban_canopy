@@ -78,6 +78,16 @@ def test_empty_valid_mask_raises():
         )
 
 
+def test_mask_shape_mismatch_is_rejected_instead_of_broadcast():
+    with pytest.raises(ValueError, match="shape"):
+        compute_coverage(
+            tree_mask=np.ones((1, 4), bool),
+            vegetation_mask=None,
+            valid_mask=np.ones((4, 4), bool),
+            tree_source=TREE_SOURCE_CLASS,
+        )
+
+
 def test_group_ratios_keep_grass_separate_from_tree():
     tree = np.zeros((10, 10), bool)
     tree[:2, :] = True

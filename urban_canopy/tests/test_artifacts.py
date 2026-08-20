@@ -1,5 +1,7 @@
 """Run-directory layout and artifact naming."""
 
+import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -13,8 +15,10 @@ from urban_canopy.io.artifacts import (
     artifact_stem,
     make_run_id,
     slugify,
+    write_json,
     write_view_artifacts,
 )
+from urban_canopy.io.atomic import atomic_write_text
 from urban_canopy.processing.coverage import TREE_SOURCE_CLASS, CoverageMetrics
 from urban_canopy.processing.refinement import RefinementStats
 
@@ -22,16 +26,13 @@ from urban_canopy.processing.refinement import RefinementStats
 class _Result:
     """Minimal stand-in for ViewResult, enough for the artifact writer."""
 
-    def __init__(self, capture, *, instances=None, shape=(20, 30)):
+    def __init__(self, capture, *, shape=(20, 30)):
         self.capture = capture
         self.raw_mask = np.zeros(shape, np.uint8)
         self.raw_mask[2:8, 2:8] = 1
         self.refined_mask = self.raw_mask.copy()
         self.vegetation_mask = None
         self.rgb_image = np.zeros((*shape, 3), np.uint8)
-        self.instances = instances
-        self.instances_supported = False
-        self.instance_source = None
         self.quality_flags = ()
         self.backend = "stub"
         self.class_space = "ade20k"
@@ -46,10 +47,6 @@ class _Result:
             tree_coverage_pct=6.0,
             tree_source=TREE_SOURCE_CLASS,
         )
-
-    @property
-    def instance_count(self):
-        return None if self.instances is None else len(self.instances)
 
     def to_dict(self, *, include_artifacts=True):
         return {"backend": self.backend, "coverage": self.coverage.to_dict()}
@@ -110,6 +107,14 @@ def test_layout_never_reuses_an_existing_run_directory(tmp_path):
     assert [p.root.name for p in (first, second, third)] == ["same", "same-2", "same-3"]
 
 
+def test_layout_reservation_is_safe_under_concurrency(tmp_path):
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        layouts = list(pool.map(lambda _: RunLayout.create(tmp_path, "parallel"), range(8)))
+    roots = [layout.root for layout in layouts]
+    assert len(set(roots)) == 8
+    assert all(root.is_dir() for root in roots)
+
+
 def test_two_backends_on_one_image_do_not_collide(tmp_path):
     """The regression this layout exists for."""
     result = _local()
@@ -168,6 +173,47 @@ def test_disabled_config_writes_nothing(tmp_path):
     result = _local()
     assert write_view_artifacts(result, ArtifactConfig(outdir=layout.views, enabled=False)) == {}
     assert not any(layout.views.iterdir())
+
+
+def test_failed_image_encoding_is_reported_and_not_recorded(tmp_path, monkeypatch):
+    layout = RunLayout.create(tmp_path, "run")
+    result = _local()
+    monkeypatch.setattr("urban_canopy.io.artifacts.cv2.imencode", lambda *args: (False, None))
+    config = ArtifactConfig(
+        outdir=layout.views,
+        save_rgb=False,
+        save_refined_mask=False,
+        save_overlay=False,
+        save_metrics_json=False,
+    )
+    with pytest.raises(RuntimeError, match="failed to encode"):
+        write_view_artifacts(result, config, index=0)
+    assert result.artifacts == {}
+
+
+def test_atomic_write_preserves_existing_target_on_replace_failure(tmp_path, monkeypatch):
+    target = tmp_path / "result.json"
+    target.write_text("old", encoding="utf-8")
+
+    def fail_replace(source, destination):
+        raise OSError("disk failure")
+
+    monkeypatch.setattr("urban_canopy.io.atomic.os.replace", fail_replace)
+    with pytest.raises(OSError, match="disk failure"):
+        atomic_write_text(target, "new")
+    assert target.read_text(encoding="utf-8") == "old"
+    assert not list(tmp_path.glob(".result.json.*.tmp"))
+
+
+def test_json_writer_emits_null_for_undefined_metrics(tmp_path):
+    target = write_json(
+        {"nan": float("nan"), "positive_inf": np.float32("inf")},
+        tmp_path / "report.json",
+    )
+    raw = target.read_text(encoding="utf-8")
+    assert "NaN" not in raw
+    assert "Infinity" not in raw
+    assert json.loads(raw) == {"nan": None, "positive_inf": None}
 
 
 @pytest.mark.parametrize("heading", [0, 5, 90, 359])

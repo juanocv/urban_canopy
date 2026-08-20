@@ -1,16 +1,14 @@
 """
 The project's primary indicator.
 
-    tree_coverage_ratio = tree pixels / valid pixels
+    tree_coverage_ratio = tree pixels / all image pixels
     tree_coverage_pct   = 100 * tree_coverage_ratio
 
 Three decisions are deliberate and worth stating, because they are what makes
 the number comparable across frames:
 
-* The denominator is *valid* pixels, not ``H * W``. Anything excluded (the
-  Street View watermark strip, a letterboxed border) leaves both numerator and
-  denominator, so the ratio stays a proper fraction of what was actually looked
-  at.
+* The production pipeline uses the complete image as the denominator. Street
+  View attribution/watermark pixels are preserved exactly as delivered.
 * ``tree`` and ``vegetation`` are computed from separate masks and reported
   separately. Nothing here folds grass or shrubs into the tree number.
 * When the backend's class space has no tree class, the ratio is ``None`` -- not
@@ -23,8 +21,9 @@ continuous ratio is the output.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 
@@ -117,24 +116,27 @@ def compute_coverage(
     """
     Turn masks into the coverage indicators.
 
-    Every mask is intersected with *valid_mask* first, so a prediction that
-    spills into an excluded region cannot push the ratio above 1.
+    Every mask must have exactly the same shape as *valid_mask*. The production
+    pipeline supplies an all-true mask, making the denominator ``H * W``.
     """
     valid = np.asarray(valid_mask).astype(bool)
     total_pixels = int(valid.size)
     valid_pixels = int(np.count_nonzero(valid))
     if valid_pixels == 0:
-        raise ValueError(
-            "The valid-pixel mask is empty, so no coverage ratio is defined. "
-            "Check exclude_bottom_px against the image height."
-        )
+        raise ValueError("The valid-pixel mask is empty, so no coverage ratio is defined.")
+
+    def checked_mask(name: str, mask: np.ndarray) -> np.ndarray:
+        checked = np.asarray(mask)
+        if checked.shape != valid.shape:
+            raise ValueError(f"{name} has shape {checked.shape}, expected {valid.shape}.")
+        return checked.astype(bool)
 
     if tree_mask is None:
         tree_pixels = None
         tree_ratio = None
         tree_pct = None
     else:
-        tree = np.asarray(tree_mask).astype(bool) & valid
+        tree = checked_mask("tree_mask", tree_mask) & valid
         tree_pixels = int(np.count_nonzero(tree))
         tree_ratio = _ratio(tree_pixels, valid_pixels)
         tree_pct = 100.0 * tree_ratio
@@ -144,14 +146,14 @@ def compute_coverage(
         veg_ratio = None
         veg_pct = None
     else:
-        veg = np.asarray(vegetation_mask).astype(bool) & valid
+        veg = checked_mask("vegetation_mask", vegetation_mask) & valid
         veg_pixels = int(np.count_nonzero(veg))
         veg_ratio = _ratio(veg_pixels, valid_pixels)
         veg_pct = 100.0 * veg_ratio
 
     ratios: dict[str, float] = {}
     for name, mask in (group_masks or {}).items():
-        group = np.asarray(mask).astype(bool) & valid
+        group = checked_mask(f"group_masks[{name!r}]", mask) & valid
         ratios[name] = _ratio(int(np.count_nonzero(group)), valid_pixels)
 
     return CoverageMetrics(
@@ -179,6 +181,8 @@ def coverage_from_mask(mask: np.ndarray, valid_mask: np.ndarray | None = None) -
     valid = (
         np.ones_like(m, dtype=bool) if valid_mask is None else np.asarray(valid_mask).astype(bool)
     )
+    if valid.shape != m.shape:
+        raise ValueError(f"valid_mask has shape {valid.shape}, expected {m.shape}.")
     denominator = int(np.count_nonzero(valid))
     if denominator == 0:
         raise ValueError("The valid-pixel mask is empty, so no coverage ratio is defined.")

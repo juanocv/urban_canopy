@@ -31,8 +31,13 @@ def test_fixed_mode_uses_exact_headings():
 
 
 def test_duplicate_headings_are_removed():
-    config = ViewPlanConfig(mode="fixed", headings=(0, 360, 90))
+    config = ViewPlanConfig(mode="fixed", headings=(0, 0, 90))
     assert plan_headings(config) == [0, 90]
+
+
+def test_out_of_range_fixed_heading_is_rejected():
+    with pytest.raises(ValueError, match="heading"):
+        ViewPlanConfig(mode="fixed", headings=(0, 360, 90))
 
 
 def test_fixed_mode_needs_headings():

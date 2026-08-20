@@ -22,8 +22,18 @@ Same config, same headings, every run, on every machine.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, Sequence
+from typing import Any, Literal
+
+from urban_canopy.validation import (
+    validate_choice,
+    validate_fov,
+    validate_heading,
+    validate_image_size,
+    validate_int_range,
+    validate_pitch,
+)
 
 __all__ = ["ViewPlanConfig", "plan_headings", "DEFAULT_OFFSETS"]
 
@@ -51,6 +61,30 @@ class ViewPlanConfig:
     pitch: int = 0
     fov: int = 90
     size: str = "640x640"
+    #: Abort the run when fewer headings than this produce a usable result.
+    min_successful_views: int = 1
+
+    def __post_init__(self) -> None:
+        validate_choice(
+            self.mode,
+            name="mode",
+            choices=("fixed", "offsets", "equiangular"),
+        )
+        validate_heading(self.reference_heading)
+        validate_pitch(self.pitch)
+        validate_fov(self.fov)
+        validate_image_size(self.size)
+        validate_int_range(self.n_views, name="n_views", minimum=1, maximum=360)
+        validate_int_range(
+            self.min_successful_views,
+            name="min_successful_views",
+            minimum=1,
+            maximum=360,
+        )
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in self.offsets):
+            raise ValueError("offsets must contain integers only.")
+        for heading in self.headings:
+            validate_heading(heading)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -62,6 +96,7 @@ class ViewPlanConfig:
             "pitch": self.pitch,
             "fov": self.fov,
             "size": self.size,
+            "min_successful_views": self.min_successful_views,
         }
 
 
@@ -109,3 +144,9 @@ class SingleViewConfig:
     fov: int = 90
     size: str = "640x640"
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        validate_heading(self.heading)
+        validate_pitch(self.pitch)
+        validate_fov(self.fov)
+        validate_image_size(self.size)

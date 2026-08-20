@@ -10,18 +10,27 @@ is hashable so a view plan can be de-duplicated before spending quota.
 
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import cast
 
 import requests
 from joblib import Memory
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from urban_canopy.io.atomic import atomic_write_bytes
+from urban_canopy.io.image_io import ImageLoadError, decode_rgb
 from urban_canopy.log import get_logger
+from urban_canopy.validation import (
+    validate_fov,
+    validate_heading,
+    validate_image_size,
+    validate_latitude,
+    validate_longitude,
+    validate_pitch,
+)
 
 logger = get_logger(__name__)
 
@@ -44,6 +53,23 @@ class Settings(BaseSettings):
     default_size: str = "640x640"
     timeout_s: int = 10
 
+    @field_validator("default_fov")
+    @classmethod
+    def _valid_default_fov(cls, value):
+        return validate_fov(value)
+
+    @field_validator("default_size")
+    @classmethod
+    def _valid_default_size(cls, value):
+        return validate_image_size(value)
+
+    @field_validator("timeout_s")
+    @classmethod
+    def _valid_timeout(cls, value):
+        if value <= 0:
+            raise ValueError("timeout_s must be positive.")
+        return value
+
 
 cfg = Settings()
 
@@ -58,6 +84,14 @@ class ImageRequest:
     pitch: int = 0
     fov: int = cfg.default_fov
     size: str = cfg.default_size
+
+    def __post_init__(self) -> None:
+        validate_latitude(self.lat)
+        validate_longitude(self.lon)
+        validate_heading(self.heading)
+        validate_pitch(self.pitch)
+        validate_fov(self.fov)
+        validate_image_size(self.size)
 
     @property
     def filename(self) -> str:
@@ -81,8 +115,8 @@ class StreetViewClient:
 
     def __init__(
         self,
-        cache_dir: Optional[Path] = None,
-        session: Optional[requests.Session] = None,
+        cache_dir: Path | None = None,
+        session: requests.Session | None = None,
         settings: Settings = cfg,
     ):
         self.settings = settings
@@ -91,7 +125,11 @@ class StreetViewClient:
         if settings.google_api_key:
             self.session.params = {"key": settings.google_api_key}
         self.session.headers.update({"User-Agent": "urban-canopy/0.1"})
-        os.makedirs(self.cache.location, exist_ok=True)
+        cache_location = self.cache.location
+        if cache_location is None:  # pragma: no cover - Memory was given a path above
+            raise RuntimeError("Street View cache has no filesystem location.")
+        self._cache_dir = Path(cache_location)
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
 
     def geocode(self, address: str) -> tuple[float, float]:
         """Return (lat, lon) for a free-form address string."""
@@ -108,10 +146,15 @@ class StreetViewClient:
             lat, lon = self.geocode(req)
             req = ImageRequest(lat, lon)
 
-        local_path = Path(self.cache.location) / req.filename
+        local_path = self._cache_dir / req.filename
         if local_path.exists():
-            logger.debug("Street View cache hit: %s", local_path)
-            return local_path
+            try:
+                decode_rgb(local_path)
+            except ImageLoadError as exc:
+                logger.warning("Ignoring corrupt Street View cache entry %s: %s", local_path, exc)
+            else:
+                logger.debug("Street View cache hit: %s", local_path)
+                return local_path
 
         params = {
             "location": f"{req.lat},{req.lon}",
@@ -122,12 +165,23 @@ class StreetViewClient:
         }
         # Google occasionally answers HTTP 200 with an error placeholder image,
         # which is far smaller than any real frame.
-        content = self._get(self._BASE, params=params).content
+        response = self._get(self._BASE, params=params)
+        content_type = response.headers.get("Content-Type", "")
+        if content_type and not content_type.lower().startswith("image/"):
+            raise RuntimeError(
+                f"Street View returned Content-Type {content_type!r} instead of an image."
+            )
+        content = response.content
         if len(content) < 1024:
             raise RuntimeError("Street View returned an empty image.")
+        try:
+            decode_rgb(content)
+        except ImageLoadError as exc:
+            raise RuntimeError(
+                "Street View returned bytes that are not a decodable image."
+            ) from exc
 
-        local_path.write_bytes(content)
-        return local_path
+        return atomic_write_bytes(local_path, content)
 
     def metadata(self, lat: float, lon: float) -> dict:
         """
@@ -141,7 +195,8 @@ class StreetViewClient:
         return resp.json()
 
     def _get(self, url: str, params: dict) -> requests.Response:
-        if not self.session.params.get("key"):
+        session_params = cast(dict[str, object], self.session.params)
+        if not session_params.get("key"):
             raise RuntimeError(
                 "GOOGLE_API_KEY is required for Street View API calls. "
                 "Set it in the environment or in a local .env file."

@@ -21,10 +21,10 @@ spaces, isolating "which classes exist" from "which model predicts them".
   merges trees with bushes. Coverage is reported as unavailable unless the
   caller explicitly enables the vegetation proxy.
 
-Consequently ``instances`` is never populated here, for the same reason as
-OneFormer: in every one of those spaces the tree class is stuff, so no
-checkpoint separates individual trees. Instance-task checkpoints exist
-(``*-instance``) but their thing classes do not include ``tree``.
+In every one of those spaces the tree class is stuff, so no checkpoint separates
+individual trees. Instance-task checkpoints exist (``*-instance``) but their
+thing classes do not include ``tree`` -- which is why this project measures
+coverage only.
 """
 
 from __future__ import annotations
@@ -32,13 +32,17 @@ from __future__ import annotations
 from typing import Literal
 
 import numpy as np
-import torch
-from transformers import Mask2FormerForUniversalSegmentation, Mask2FormerImageProcessor
 
 from urban_canopy.log import get_logger
+from urban_canopy.validation import validate_probability
 
 from .base import Segment, SegmentationOutput, build_group_masks
-from .taxonomy import Taxonomy, default_taxonomy, infer_class_space
+from .taxonomy import (
+    Taxonomy,
+    default_taxonomy,
+    infer_class_space,
+    validate_taxonomy_class_space,
+)
 
 logger = get_logger(__name__)
 
@@ -68,7 +72,7 @@ def infer_task(model_name: str) -> Task:
         # their masks is still a valid coverage measure.
         logger.warning(
             "%s is an instance checkpoint, but no Mask2Former class space has tree as a "
-            "thing class. Reading it as semantic coverage; instances stay unavailable.",
+            "thing class. Reading it as semantic coverage.",
             model_name,
         )
         return "semantic"
@@ -77,8 +81,6 @@ def infer_task(model_name: str) -> Task:
 
 class Mask2FormerSegmenter:
     """Vegetation segmentation through Mask2Former."""
-
-    supports_tree_instances = False
 
     def __init__(
         self,
@@ -94,15 +96,30 @@ class Mask2FormerSegmenter:
         self.backend_name = "mask2former"
         self.model_name = model_name
         self.class_space = infer_class_space(model_name)
-        self.taxonomy = taxonomy or default_taxonomy(self.class_space)
+        self.taxonomy = validate_taxonomy_class_space(
+            taxonomy or default_taxonomy(self.class_space),
+            self.class_space,
+            context=f"Mask2Former checkpoint {model_name!r}",
+        )
         self.task: Task = task or infer_task(model_name)
         if self.task not in ("semantic", "panoptic"):
             raise ValueError(f"task must be 'semantic' or 'panoptic'; got {self.task!r}")
 
-        self._panoptic_threshold = panoptic_threshold
-        self._mask_threshold = mask_threshold
-        self._overlap_mask_area_threshold = overlap_mask_area_threshold
+        self._panoptic_threshold = validate_probability(
+            panoptic_threshold, name="panoptic_threshold"
+        )
+        self._mask_threshold = validate_probability(mask_threshold, name="mask_threshold")
+        self._overlap_mask_area_threshold = validate_probability(
+            overlap_mask_area_threshold,
+            name="overlap_mask_area_threshold",
+        )
 
+        import torch
+        from PIL import Image
+        from transformers import Mask2FormerForUniversalSegmentation, Mask2FormerImageProcessor
+
+        self._torch = torch
+        self._Image = Image
         self.processor = Mask2FormerImageProcessor.from_pretrained(model_name)
         self.model = Mask2FormerForUniversalSegmentation.from_pretrained(model_name)
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -112,11 +129,12 @@ class Mask2FormerSegmenter:
     def _id2label(self) -> dict[int, str]:
         return getattr(self.model.config, "id2label", {}) or {}
 
-    @torch.inference_mode()
     def segment(self, img_rgb: np.ndarray) -> SegmentationOutput:
-        from PIL import Image
+        with self._torch.inference_mode():
+            return self._segment(img_rgb)
 
-        pil = Image.fromarray(np.asarray(img_rgb))
+    def _segment(self, img_rgb: np.ndarray) -> SegmentationOutput:
+        pil = self._Image.fromarray(np.asarray(img_rgb))
         height, width = img_rgb.shape[:2]
 
         inputs = self.processor(images=pil, return_tensors="pt")
@@ -155,8 +173,6 @@ class Mask2FormerSegmenter:
             group_masks=build_group_masks(self.taxonomy, labelled, (height, width)),
             label_map=label_map,
             segments=segments,
-            instances=None,
-            supports_tree_instances=False,
             notes=tuple(notes),
         )
 
@@ -192,9 +208,9 @@ class Mask2FormerSegmenter:
             class_id = raw.get("label_id", raw.get("category_id"))
             name = self._id2label.get(int(class_id), str(class_id))
             segment_id = int(raw["id"])
-            # transformers' panoptic post-processing does not report isthing, and
-            # this adapter never emits instances anyway, so segments are recorded
-            # as stuff rather than guessed at.
+            # transformers' panoptic post-processing does not report isthing, so
+            # segments are recorded as stuff rather than guessed at; nothing
+            # downstream distinguishes them.
             segments.append(
                 Segment(
                     id=segment_id,

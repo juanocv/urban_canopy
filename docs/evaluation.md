@@ -13,6 +13,10 @@ tree-ai evaluate --predictions artifacts_out/<run>/predictions.json \
 
 The predictions file embeds the run manifest (model, versions, taxonomy,
 refinement config, seed), so every reported number is traceable.
+The current interchange schema is `urban_canopy/predictions/3`. Version 1 files
+must be regenerated because they may have used a cropped denominator, and
+version 2 files because they carried per-instance predictions this build no
+longer evaluates — see below.
 
 The join is on the original image basename. For Roboflow exports that means
 `images[].extra.name`, which is preferred whenever present because Roboflow
@@ -22,14 +26,45 @@ error rather than a silent overwrite, and `tree-ai validate-dataset` reports it
 before an evaluation is ever run. Images present on only one side are listed in
 the report, never silently dropped.
 
-Three independent levels are computed. They answer different questions and are
+**Extensions.** Annotation tools re-encode: a JPEG frame labelled in Roboflow
+comes back as `frame.png`. Names left unmatched after the exact pass are
+therefore matched again ignoring the extension, and every such pairing is logged
+and listed in the report under `settings.joined_across_extensions` — joining two
+differently-named files is a judgement the report has to show, not hide.
+
+Exact matches are made first, so a set genuinely containing both `frame.jpg` and
+`frame.png` pairs each with its own annotation and the fallback never sees them.
+When the fallback would be ambiguous — two leftovers on either side sharing a
+name — evaluation stops rather than choosing, because pairing the wrong one
+scores an image against another image's ground truth and still prints a
+plausible number. Comparison is case-sensitive, since `Frame.jpg` and
+`frame.jpg` are different files on Linux.
+
+Two independent levels are computed. They answer different questions and are
 never merged into one score.
+
+**There is no per-instance level.** The project once planned one, and it was
+removed on evidence: no published checkpoint for any class space here carries
+tree as a *thing* class (COCO-80 has only `potted plant`; COCO-panoptic's
+`tree-merged` is stuff; LVIS v1's 1203 categories contain only `Christmas_tree`;
+ADE20K's 100-thing instance set has `palm` but not `tree`), and every
+downloadable tree instance model is trained on overhead aerial imagery, not
+street level. A recall or AP50 for individual trees could only have been
+computed against a model that does not exist. Ground truth is still annotated
+one tree at a time — those instances are unioned into the semantic mask that
+both levels score against.
 
 ## Level 1 — Semantic segmentation (pixels)
 
 Binary tree-vs-rest comparison between the predicted refined mask and the
-union of the annotated instances, restricted to the **valid pixels** the
-prediction was measured over (the excluded watermark strip leaves both sides).
+union of the annotated instances over the complete image. Street View
+attribution and watermark pixels remain untouched in both inference and ground
+truth evaluation.
+
+Images whose backend cannot express a tree class carry
+`mask_status="unavailable"`. They are listed under `semantic_skipped_images`
+and never converted into an all-background prediction. `mask_status="omitted"`
+similarly means that mask export was intentionally disabled.
 
 Reported per image and pooled:
 
@@ -41,41 +76,16 @@ Reported per image and pooled:
 Conventions: pooled ("micro") metrics add the confusion counts over the whole
 set first — they are the headline numbers. Macro averages are also reported
 with the count of images that contributed. An image where neither prediction
-nor ground truth has any tree pixel has *undefined* per-image IoU (reported as
-NaN, counted in `n_images_without_trees_in_both`), rather than a flattering
-1.0 or a punishing 0.0.
+nor ground truth has any tree pixel has *undefined* per-image IoU (represented
+as `NaN` while computing and exported as JSON `null`, counted in
+`n_images_without_trees_in_both`), rather than a flattering 1.0 or a punishing
+0.0. All JSON exports are strict: neither `NaN` nor `Infinity` is emitted.
 
-## Level 2 — Individual trees (instances)
-
-Runs only when predictions carry instances: a real instance model (e.g. a
-fine-tuned Mask R-CNN) or the explicitly requested connected-component
-heuristic. The report names which (`instance_source`), because they are
-different claims — the heuristic merges touching crowns and splits occluded
-ones by construction.
-
-Matching: greedy one-to-one by descending confidence (COCO protocol), IoU
-threshold configurable via `--iou-threshold` (default **0.50**). Each
-prediction matches at most one ground-truth instance and vice versa; a second
-prediction on an already-claimed tree is a false positive. Predictions
-without scores are ranked by area instead, and the report says so
-(`ranked_by`).
-
-Reported: TP, FP, FN, precision, recall, F1, and **mean matched IoU** (the
-mean IoU of true-positive pairs only — localisation quality, separate from
-detection rate). This supports statements like:
-
-> recall 0.80 for individual trees; correctly matched instances had mean IoU 0.84.
-
-**AP50** and **AP50:95** (101-point interpolation, COCO thresholds) are
-computed only when *every* prediction carries a finite confidence score.
-Otherwise the report states why AP is unavailable instead of inventing an
-ordering.
-
-## Level 3 — The coverage indicator
+## Level 2 — The coverage indicator
 
 Direct comparison of the published number, `tree_coverage_pred` vs
 `tree_coverage_gt`, both in percent, with `tree_coverage_gt` computed from the
-annotation union using the same valid-pixel denominator as the prediction.
+annotation union over the same complete image as the prediction.
 
 - **MAE** in percentage points (headline)
 - **RMSE** in percentage points
@@ -87,16 +97,15 @@ predicting exactly twice the true coverage has r = 1.0 and is wrong by a
 factor of two; correlation never substitutes for the error metrics. r is
 omitted when either side has no variance.
 
-Levels 1 and 3 are deliberately separate: a mask shifted sideways can have
-poor IoU and perfect coverage agreement. Both facts matter and both are
-reported.
+The two levels are deliberately separate: a mask shifted sideways can have poor
+IoU and perfect coverage agreement. Both facts matter and both are reported.
 
 ## Experimental split
 
 - Zero-shot pre-trained backends with default settings: the whole labelled set
   may serve as test.
 - The moment any parameter is tuned by looking at results — refinement sizes,
-  score thresholds, taxonomy edits, `--exclude-bottom-px` — the set must be
+  score thresholds or taxonomy edits — the set must be
   split: a **calibration/validation** subset for tuning and a **held-out test**
   subset touched once, at the end. Record the split as file lists next to the
   annotations.
@@ -110,7 +119,6 @@ reported.
 ## Qualitative audit
 
 `--save-artifacts` writes, per view: the RGB frame, raw mask, refined mask,
-tree overlay, instance visualisation (when instances exist) and a metrics
-JSON. The evaluation report carries per-image rows; sorting them by IoU or by
+tree overlay and a metrics JSON. The evaluation report carries per-image rows; sorting them by IoU or by
 absolute coverage error and opening the corresponding artifact folders is the
 intended workflow for collecting success and failure cases.

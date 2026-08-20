@@ -4,16 +4,20 @@ The common contract every segmentation backend fulfils.
 This replaces the sidewalk project's four-tuple return
 ``(mask, seg_map, seg_info, obstacles)``, which encoded one target class and one
 downstream consumer. A canopy backend has to say more than "here is the mask":
-it must report which class space it speaks, which vegetation groups it could
-separate, and -- crucially -- whether the instances it returns are real model
-instances or nothing at all. ``SegmentationOutput`` carries all of that, so no
-consumer has to guess.
+it must report which class space it speaks and which vegetation groups it could
+separate, so no consumer has to guess.
+
+The contract is deliberately semantic-only. Individual trees are not part of it:
+no published checkpoint for any class space this project supports carries tree as
+a *thing* class, so a backend could never honestly fill such a field. See
+``docs/evaluation.md``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Protocol, Sequence
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -21,19 +25,9 @@ from .taxonomy import Taxonomy
 
 __all__ = [
     "Segment",
-    "InstanceMask",
     "SegmentationOutput",
     "Segmenter",
-    "MODEL_INSTANCES",
-    "HEURISTIC_INSTANCES",
 ]
-
-#: ``InstanceMask.source`` for masks a model emitted as separate instances.
-MODEL_INSTANCES = "model"
-#: ``InstanceMask.source`` for masks derived by splitting a semantic mask into
-#: connected components. This is a heuristic, not instance segmentation; see
-#: :mod:`urban_canopy.processing.instances`.
-HEURISTIC_INSTANCES = "connected_components_heuristic"
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,26 +38,6 @@ class Segment:
     label: str
     is_thing: bool = False
     score: float | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class InstanceMask:
-    """
-    One candidate tree instance.
-
-    ``source`` is not decoration: every metric computed from these masks is
-    reported alongside it, because a connected component of a stuff mask and a
-    predicted instance are different claims about the world.
-    """
-
-    label: str
-    mask: np.ndarray  # H x W bool
-    score: float | None = None
-    source: str = MODEL_INSTANCES
-
-    @property
-    def area(self) -> int:
-        return int(np.count_nonzero(self.mask))
 
 
 @dataclass(slots=True)
@@ -79,16 +53,47 @@ class SegmentationOutput:
     #: Per-pixel segment/class id map, kept for auditing and debug overlays.
     label_map: np.ndarray | None = None
     segments: list[Segment] | None = None
-    #: Real per-tree instances, or None when the backend cannot produce them.
-    instances: list[InstanceMask] | None = None
-    #: True only when the backend genuinely separates individual trees.
-    supports_tree_instances: bool = False
     #: Free-form provenance notes surfaced in results and logs.
     notes: tuple[str, ...] = field(default_factory=tuple)
 
     def group(self, name: str) -> np.ndarray | None:
         """Mask for a group, or None when this class space has no such group."""
         return self.group_masks.get(name)
+
+    def validate(self, expected_shape: tuple[int, int]) -> None:
+        """Reject malformed backend output before NumPy can broadcast it silently."""
+        shape = (int(expected_shape[0]), int(expected_shape[1]))
+        if min(shape) <= 0:
+            raise ValueError(f"Expected a positive output shape, got {shape}.")
+        if self.taxonomy.class_space != self.class_space:
+            raise ValueError(
+                f"Segmentation output declares class_space={self.class_space!r}, but its "
+                f"taxonomy declares {self.taxonomy.class_space!r}."
+            )
+
+        expected_groups = set(self.taxonomy.group_names)
+        actual_groups = set(self.group_masks)
+        if actual_groups != expected_groups:
+            missing = sorted(expected_groups - actual_groups)
+            extra = sorted(actual_groups - expected_groups)
+            raise ValueError(
+                "Segmentation output groups do not match the taxonomy "
+                f"(missing={missing}, extra={extra})."
+            )
+
+        for name, mask in self.group_masks.items():
+            arr = np.asarray(mask)
+            if arr.ndim != 2 or arr.shape != shape:
+                raise ValueError(
+                    f"Segmentation group {name!r} has shape {arr.shape}, expected {shape}."
+                )
+
+        if self.label_map is not None:
+            label_map = np.asarray(self.label_map)
+            if label_map.ndim != 2 or label_map.shape != shape:
+                raise ValueError(
+                    f"Segmentation label_map has shape {label_map.shape}, expected {shape}."
+                )
 
     def union(self, names: Iterable[str]) -> np.ndarray | None:
         """Union of several group masks; None when none of them exist."""
@@ -121,7 +126,6 @@ class Segmenter(Protocol):
     backend_name: str
     class_space: str
     taxonomy: Taxonomy
-    supports_tree_instances: bool
 
     def segment(self, img_rgb: np.ndarray) -> SegmentationOutput: ...
 
