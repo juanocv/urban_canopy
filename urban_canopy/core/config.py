@@ -95,8 +95,10 @@ def set_seed(seed: int, *, deterministic: bool = False) -> dict[str, Any]:
         status["numpy_seeded"] = True
     except ModuleNotFoundError:  # pragma: no cover - numpy is a hard dependency
         status["numpy_seeded"] = False
+    # Optional: torch belongs to the ml extra, and the type-check job installs
+    # only dev,api -- the same contract the import-smoke test enforces.
     try:
-        import torch
+        import torch  # pyright: ignore[reportMissingImports]
 
         torch.manual_seed(seed)
         if torch.cuda.is_available():
@@ -163,8 +165,10 @@ def build_manifest(
     """Snapshot of the run: versions, device, config, taxonomy, seed, timestamp."""
     torch_version = None
     cuda_version = None
+    # Optional: torch belongs to the ml extra, and the type-check job installs
+    # only dev,api -- the same contract the import-smoke test enforces.
     try:
-        import torch
+        import torch  # pyright: ignore[reportMissingImports]
 
         torch_version = getattr(torch, "__version__", None)
         cuda_version = getattr(getattr(torch, "version", None), "cuda", None)

@@ -114,8 +114,10 @@ def resolve_device(requested: DeviceName | str) -> str:
     """Resolve auto/cpu/cuda without depending on a CLI parser."""
     if requested not in ("auto", "cpu", "cuda"):
         raise ValueError(f"Unknown device {requested!r}; choose auto, cpu or cuda.")
+    # Optional: torch belongs to the ml extra, and the type-check job installs
+    # only dev,api -- the same contract the import-smoke test enforces.
     try:
-        import torch
+        import torch  # pyright: ignore[reportMissingImports]
     except ModuleNotFoundError:
         if requested == "cuda":
             raise ValueError(
