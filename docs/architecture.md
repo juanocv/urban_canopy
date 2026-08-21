@@ -1,3 +1,5 @@
+> 🇧🇷 **Português:** [Leia esta página em português](pt-br/architecture.md)
+
 # Architecture
 
 Urban Canopy inherits the modular architecture of

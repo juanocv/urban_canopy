@@ -1,3 +1,5 @@
+> 🇧🇷 **Português:** [Leia esta página em português](pt-br/detectron2-windows.md)
+
 # Detectron2 on Windows
 
 Detectron2 is the one backend upstream does not officially support on Windows
