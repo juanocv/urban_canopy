@@ -140,7 +140,9 @@ being measured. Heading plans here are deterministic and blind to the imagery.
   a sibling temporary file and atomically replace the target only after success.
 - **Bounded RGB retention**: `keep_rgb` defaults to false. CLI batches yield one
   result at a time and release RGB after per-view artifacts; the API retains it
-  only for `/analyse/single` requests that ask for overlays.
+  only for requests that ask for overlays, and `/analyse/multi` additionally
+  refuses plans beyond `UC_API_MAX_OVERLAY_VIEWS` so retention stays bounded by
+  configuration rather than by the caller's view count.
 - **Reproducibility levels**: RNG seeding and deterministic Torch algorithms are
   separate manifest fields. `PYTHONHASHSEED` is observed, never assigned after
   startup, and cross-stack bitwise identity is explicitly not guaranteed.

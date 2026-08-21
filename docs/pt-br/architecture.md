@@ -145,7 +145,9 @@ imagens.
   após sucesso.
 - **Retenção limitada de RGB**: `keep_rgb` é falso por padrão. Lotes da CLI
   produzem um resultado por vez e liberam o RGB depois dos artefatos por vista; a
-  API o retém apenas para requisições `/analyse/single` que pedem overlays.
+  API o retém apenas para requisições que pedem overlays, e o `/analyse/multi`
+  ainda recusa planos além de `UC_API_MAX_OVERLAY_VIEWS`, de modo que a retenção
+  fica limitada pela configuração e não pela quantidade de vistas do chamador.
 - **Níveis de reprodutibilidade**: o seeding do RNG e os algoritmos
   determinísticos do Torch são campos separados do manifesto. `PYTHONHASHSEED` é
   observado, nunca atribuído após a inicialização, e a identidade bit a bit entre

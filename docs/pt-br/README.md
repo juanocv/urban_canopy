@@ -205,14 +205,25 @@ uvicorn urban_canopy.webapi:app --host 127.0.0.1 --port 8000
 
 A API lê as mesmas configurações de backend que a CLI, a partir do `.env`.
 `POST /analyse/single` e `POST /analyse/multi` retornam as métricas de cobertura
-(com overlays em base64 opcionais no `/single`) mais a proveniência de
-backend/checkpoint/taxonomia. `GET /ping` é uma sonda de liveness; `GET /ready`
-confirma a inicialização do modelo e devolve a mesma proveniência, incluindo um
-SHA-256 quando os pesos são locais. A documentação interativa fica em `/docs`. A
-avaliação de datasets permanece na CLI.
+mais a proveniência de backend/checkpoint/taxonomia. `GET /ping` é uma sonda de
+liveness; `GET /ready` confirma a inicialização do modelo e devolve a mesma
+proveniência, incluindo um SHA-256 quando os pesos são locais. A documentação
+interativa fica em `/docs`. A avaliação de datasets permanece na CLI.
+
+Os dois endpoints de análise aceitam `return_overlays` (desligado por padrão),
+que acrescenta PNGs em base64 do quadro RGB, da sobreposição de árvores e da
+máscara refinada — no `/single` sob uma chave `overlays` no topo, no `/multi`
+sob `overlays` em cada vista, permitindo comparar direções lado a lado. Elas
+dominam o tamanho da resposta: um quadro 640x640 tem cerca de um megabyte de PNG
+e cada vista carrega três, então o `/multi` recusa um plano maior que
+`UC_API_MAX_OVERLAY_VIEWS` (padrão 8) em vez de servir uma resposta que ninguém
+pediu para receber.
 
 A API não tem autenticação e chama uma API paga do Google a cada requisição —
 mantenha-a atrás de um proxy ou presa ao localhost.
+
+Um console web estático para esta API está em
+[urban_canopy-web](https://github.com/juanocv/urban_canopy-web).
 
 ## Ground truth e avaliação
 

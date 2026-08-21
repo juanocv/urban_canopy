@@ -173,3 +173,76 @@ def test_multi_view_rejects_impossible_success_minimum(client):
     )
     assert response.status_code == 422
     assert "distinct planned headings (2)" in response.json()["detail"]
+
+
+def test_multi_view_overlays(client):
+    response = client.post(
+        "/analyse/multi",
+        json={"lat": -23.0, "lon": -46.0, "offsets": [0, 90], "return_overlays": True},
+    )
+    assert response.status_code == 200
+    views = response.json()["views"]
+    assert len(views) == 2
+    for view in views:
+        assert set(view["overlays"]) == {
+            "rgb_png_b64",
+            "overlay_tree_png_b64",
+            "mask_refined_png_b64",
+        }
+    # Overlays need the RGB-retaining pipeline, same as the single-view endpoint.
+    assert (True, False, True) in webapi.app.state.registry._pipes
+
+
+def test_multi_view_without_overlays_omits_them(client):
+    response = client.post(
+        "/analyse/multi",
+        json={"lat": -23.0, "lon": -46.0, "offsets": [0, 90]},
+    )
+    assert response.status_code == 200
+    assert all("overlays" not in view for view in response.json()["views"])
+    assert (True, False, False) in webapi.app.state.registry._pipes
+
+
+def test_multi_view_overlays_are_capped_by_plan_size(client, monkeypatch):
+    monkeypatch.setattr(webapi, "MAX_OVERLAY_VIEWS", 2)
+    response = client.post(
+        "/analyse/multi",
+        json={
+            "lat": -23.0,
+            "lon": -46.0,
+            "offsets": [0, 90, 180],
+            "return_overlays": True,
+        },
+    )
+    assert response.status_code == 422
+    assert "limited to 2 planned headings" in response.json()["detail"]
+
+
+def test_multi_view_overlay_cap_ignored_without_overlays(client, monkeypatch):
+    monkeypatch.setattr(webapi, "MAX_OVERLAY_VIEWS", 2)
+    response = client.post(
+        "/analyse/multi",
+        json={"lat": -23.0, "lon": -46.0, "offsets": [0, 90, 180]},
+    )
+    assert response.status_code == 200
+    assert len(response.json()["views"]) == 3
+
+
+def test_multi_view_overlays_skip_views_without_imagery(client, monkeypatch):
+    """A view whose RGB was dropped reports no overlays rather than empty ones."""
+    real_overlays = webapi._overlays
+    calls = {"n": 0}
+
+    def sometimes_missing(result):
+        calls["n"] += 1
+        return {} if calls["n"] == 1 else real_overlays(result)
+
+    monkeypatch.setattr(webapi, "_overlays", sometimes_missing)
+    response = client.post(
+        "/analyse/multi",
+        json={"lat": -23.0, "lon": -46.0, "offsets": [0, 90], "return_overlays": True},
+    )
+    assert response.status_code == 200
+    views = response.json()["views"]
+    assert "overlays" not in views[0]
+    assert "overlays" in views[1]

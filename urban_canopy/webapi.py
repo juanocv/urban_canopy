@@ -15,6 +15,15 @@ Endpoints
 Dataset evaluation is CLI-only (``tree-ai evaluate``): it reads local files and
 produces large reports, neither of which belongs in a request/response cycle.
 
+Overlays
+--------
+Both analysis endpoints can return base64 PNGs (``return_overlays``), off by
+default. They are the dominant cost of a response: a 640x640 street frame is
+roughly a megabyte of PNG, and a view carries three of them. On ``/analyse/multi``
+that multiplies by the number of headings, so a plan larger than
+``UC_API_MAX_OVERLAY_VIEWS`` (default 8) is refused rather than served as a
+response no client asked to receive.
+
 Concurrency
 -----------
 The endpoints are synchronous, so Starlette runs them in a worker thread pool
@@ -55,6 +64,9 @@ logger = get_logger(__name__)
 # Serialises model work; see the module docstring.
 MAX_CONCURRENCY = max(1, int(os.getenv("UC_API_MAX_CONCURRENCY", "1")))
 _inference_slots = threading.BoundedSemaphore(MAX_CONCURRENCY)
+
+# Ceiling on how many views may carry overlays in one multi-view response.
+MAX_OVERLAY_VIEWS = max(1, int(os.getenv("UC_API_MAX_OVERLAY_VIEWS", "8")))
 
 CORS_ORIGINS = [o.strip() for o in os.getenv("UC_API_CORS_ORIGINS", "*").split(",") if o.strip()]
 
@@ -204,6 +216,13 @@ class MultiViewRequest(BaseModel):
     size: str = "640x640"
     refine: bool = True
     allow_vegetation_proxy: bool = False
+    return_overlays: bool = Field(
+        False,
+        description=(
+            "Include base64 PNG overlays (RGB, tree overlay, mask) on every view. "
+            f"Limited to {MAX_OVERLAY_VIEWS} planned headings; see UC_API_MAX_OVERLAY_VIEWS."
+        ),
+    )
 
     @field_validator("lat")
     @classmethod
@@ -322,10 +341,16 @@ def analyse_multi(req: MultiViewRequest) -> dict[str, Any]:
             "min_successful_views cannot exceed the number of distinct "
             f"planned headings ({planned_count})",
         )
+    if req.return_overlays and planned_count > MAX_OVERLAY_VIEWS:
+        raise HTTPException(
+            422,
+            f"return_overlays is limited to {MAX_OVERLAY_VIEWS} planned headings; "
+            f"this plan plans {planned_count}. Reduce the plan or omit the overlays.",
+        )
     pipe = app.state.registry.get(
         refine=req.refine,
         allow_vegetation_proxy=req.allow_vegetation_proxy,
-        keep_rgb=False,
+        keep_rgb=req.return_overlays,
     )
     with _inference_slot():
         try:
@@ -340,4 +365,12 @@ def analyse_multi(req: MultiViewRequest) -> dict[str, Any]:
 
     payload = result.to_dict()
     payload["backend_provenance"] = app.state.backend_provenance
+    if req.return_overlays:
+        # `to_dict` builds one entry per view, in order, so the pairing holds.
+        # strict=True keeps a future change to that contract from silently
+        # attaching one view's imagery to another view's metrics.
+        for view, view_payload in zip(result.views, payload["views"], strict=True):
+            overlays = _overlays(view)
+            if overlays:
+                view_payload["overlays"] = overlays
     return payload
