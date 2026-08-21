@@ -5,8 +5,8 @@
 O Urban Tree Coverage estima a **cobertura arbórea visível** de vias urbanas a
 partir de imagens do Google Street View, usando segmentação semântica e
 panóptica. O pacote de produção fica em `urban_canopy/`; os checkouts de modelos
-de terceiros (OneFormer via HuggingFace, Detectron2, DeepLab) ficam fora da
-fronteira do pacote.
+de terceiros (OneFormer via HuggingFace, Detectron2, DeepLab) ficam fora dos
+limites deste pacote.
 
 O indicador principal é contínuo e por imagem:
 
@@ -15,7 +15,7 @@ tree_coverage_ratio = pixels de árvore / todos os pixels da imagem   (em [0, 1]
 tree_coverage_pct   = 100 * tree_coverage_ratio
 ```
 
-Um `vegetation_coverage_ratio` mais amplo é reportado separadamente quando o
+O indicador `vegetation_coverage_ratio`, mais amplo, é reportado separadamente quando o
 modelo consegue distingui-lo. Classes de árvore, grama e arbusto **nunca são
 fundidas silenciosamente** — o mapeamento das classes do modelo para esses grupos
 é explícito, inspecionável e sobrescrevível (`urban_canopy/models/taxonomy.py`).
@@ -23,7 +23,7 @@ Nenhuma faixa qualitativa ("pouca / média / muita vegetação") é produzida, e
 projeto mede área, nunca contagem. O [FAQ](faq.md#o-indicador) traz o raciocínio
 por trás das duas decisões.
 
-## O que ele faz
+## O que faz?
 
 1. **Aquisição** — Street View (com cache, registrando id do panorama e data de
    captura) ou imagens locais.
@@ -41,7 +41,7 @@ por trás das duas decisões.
 8. **Artefatos de auditoria** — por vista: RGB, máscaras bruta e refinada,
    overlays, JSON de métricas; além de exportações CSV/JSON por execução.
 
-### O que cada backend pode afirmar
+### O que cada backend oferece?
 
 | Backend | Pré-treino | Classe de árvore |
 |---|---|---|
@@ -50,7 +50,7 @@ por trás das duas decisões.
 | Detectron2 panoptic FPN | COCO-panoptic 133 | `tree-merged` (stuff) |
 | DeepLab V3+ | Cityscapes-19 | nenhuma (`vegetation` funde árvores+arbustos) |
 
-Um backend cujo espaço de classes não consegue expressar árvore reporta
+Um backend cujo espaço de classes não consegue discriminar a classe árvore reporta
 **nenhuma razão de cobertura**, em vez de rotular novamente o número de
 vegetação. Veja [qual backend usar](faq.md#escolha-do-backend) para a comparação
 medida.
@@ -259,6 +259,22 @@ python scripts/check_coverage.py coverage.json --fail-under 60
 A suíte padrão é offline e somente CPU; `pytest -m gpu` e `pytest -m network`
 rodam as verificações excluídas. Veja o [FAQ](faq.md#desenvolvimento) para o que
 cada gate cobra e por quê.
+
+## Transparência sobre o uso de IA Generativa
+
+Ferramentas de IA generativa foram utilizadas como apoio durante a concepção e o 
+desenvolvimento deste projeto, incluindo atividades como discussão de alternativas 
+de implementação, revisão e organização de código, elaboração de testes e revisão 
+da documentação.
+
+As sugestões e conteúdos produzidos com auxílio dessas ferramentas foram revisados, 
+adaptados e validados pelo autor. As decisões de projeto, a implementação final, 
+os experimentos, a interpretação dos resultados e a responsabilidade pelo conteúdo 
+deste repositório permanecem integralmente sob responsabilidade do autor.
+
+Esse uso de IA generativa como ferramenta de apoio ao desenvolvimento é distinto 
+dos modelos de segmentação empregados pelo próprio Urban Tree Coverage como parte 
+de seu pipeline de análise.
 
 ## Citação
 

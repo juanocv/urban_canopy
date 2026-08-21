@@ -256,6 +256,20 @@ The default suite is offline and CPU-only; `pytest -m gpu` and `pytest -m networ
 run the excluded checks. See the [FAQ](docs/faq.md#development) for what each
 gate enforces and why.
 
+## Generative AI Usage Transparency
+
+Generative AI tools were used to support the conception and development of this project, 
+including activities such as discussing implementation alternatives, reviewing and 
+organizing code, developing tests, and reviewing documentation.
+
+Suggestions and content produced with the assistance of these tools were reviewed, adapted, 
+and validated by the author. Project decisions, the final implementation, experiments, 
+interpretation of results, and responsibility for the contents of this repository remain 
+entirely with the author.
+
+This use of generative AI as a development support tool is distinct from the segmentation 
+models employed by Urban Tree Coverage as part of its analysis pipeline.
+
 ## Citation
 
 ```bibtex
