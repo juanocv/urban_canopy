@@ -1,3 +1,5 @@
+> 🇧🇷 **Português:** [Leia esta página em português](pt-br/reproducibility.md)
+
 # Reproducibility Notes
 
 ## Model assets and caches
@@ -52,9 +54,9 @@ python -m pip install "git+https://github.com/facebookresearch/detectron2.git"
 ```
 
 On Windows use the upstream instructions (Visual Studio Build Tools required).
-Instance mode additionally needs your fine-tuned config and weights
-(`--d2-config`, `--d2-weights`); its thing classes must include a class the
-taxonomy maps to `tree`.
+The backend runs the COCO-panoptic model from the zoo and has no custom-weights
+path: no published Detectron2 class space carries tree as a *thing* class, so
+there is nothing a fine-tuned instance config could add here.
 
 See [Detectron2 on Windows](detectron2-windows.md) for the `pkg_resources`
 failure, the torch/`_C` coupling, and an assessment of whether WSL is worth it.

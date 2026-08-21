@@ -1,3 +1,5 @@
+> 🇧🇷 **Português:** [Leia esta página em português](pt-br/annotation_protocol.md)
+
 # Annotation Protocol
 
 Ground truth is produced manually in Roboflow and exported as **COCO Instance

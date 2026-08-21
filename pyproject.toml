@@ -40,6 +40,8 @@ notebooks = [
   "jupyterlab>=4.0",
   "ipykernel>=6.0",
   "matplotlib>=3.9",
+  # 03_report_figures.ipynb tabulates measurements and emits LaTeX tables.
+  "pandas>=2.0",
 ]
 ml = [
   "pillow>=10.0",

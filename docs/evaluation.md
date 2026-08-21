@@ -1,3 +1,5 @@
+> 🇧🇷 **Português:** [Leia esta página em português](pt-br/evaluation.md)
+
 # Evaluation Methodology
 
 Evaluation runs offline from two files:
